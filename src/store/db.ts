@@ -1,8 +1,9 @@
 import type { ModeKind, Report } from '../engine/types';
 import type { Song } from '../music/types';
+import type { Collection } from './collections';
 
 const DB_NAME = 'pianist';
-const VERSION = 1;
+const VERSION = 2;
 
 let dbPromise: Promise<IDBDatabase> | null = null;
 
@@ -11,12 +12,17 @@ function open(): Promise<IDBDatabase> {
     const req = indexedDB.open(DB_NAME, VERSION);
     req.onupgradeneeded = () => {
       const db = req.result;
-      db.createObjectStore('songs', { keyPath: 'id' });
-      const sessions = db.createObjectStore('sessions', { keyPath: 'id' });
-      sessions.createIndex('date', 'date');
-      sessions.createIndex('songId', 'songId');
-      db.createObjectStore('bests', { keyPath: 'key' });
-      db.createObjectStore('days', { keyPath: 'date' });
+      const has = (name: string) => db.objectStoreNames.contains(name);
+      if (!has('songs')) db.createObjectStore('songs', { keyPath: 'id' });
+      if (!has('sessions')) {
+        const sessions = db.createObjectStore('sessions', { keyPath: 'id' });
+        sessions.createIndex('date', 'date');
+        sessions.createIndex('songId', 'songId');
+      }
+      if (!has('bests')) db.createObjectStore('bests', { keyPath: 'key' });
+      if (!has('days')) db.createObjectStore('days', { keyPath: 'date' });
+      // v2: collections
+      if (!has('collections')) db.createObjectStore('collections', { keyPath: 'id' });
     };
     req.onsuccess = () => resolve(req.result);
     req.onerror = () => reject(req.error);
@@ -49,6 +55,21 @@ export async function listSongs(): Promise<Song[]> {
 
 export async function deleteSong(id: string): Promise<void> {
   await promisify((await store('songs', 'readwrite')).delete(id));
+}
+
+/* ---- collections */
+
+export async function listCollections(): Promise<Collection[]> {
+  const all = await promisify((await store('collections')).getAll() as IDBRequest<Collection[]>);
+  return all.sort((a, b) => a.createdAt - b.createdAt);
+}
+
+export async function saveCollection(c: Collection): Promise<void> {
+  await promisify((await store('collections', 'readwrite')).put(c));
+}
+
+export async function deleteCollection(id: string): Promise<void> {
+  await promisify((await store('collections', 'readwrite')).delete(id));
 }
 
 /* ---- session history */

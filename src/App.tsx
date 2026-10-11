@@ -7,10 +7,20 @@ import { connectMidi } from './input/midi';
 import { importSongFile } from './music/importers';
 import { builtinSongs } from './music/library';
 import type { Song } from './music/types';
-import { deleteSong, listBests, listSongs, saveSong, type Best } from './store/db';
+import { addSongs, newCollection, withoutSong, type Collection } from './store/collections';
+import {
+  deleteCollection,
+  deleteSong,
+  listBests,
+  listCollections,
+  listSongs,
+  saveCollection,
+  saveSong,
+  type Best,
+} from './store/db';
 import { useSettings } from './store/settings';
 import { InputBar } from './ui/InputBar';
-import { Library } from './ui/Library';
+import { Library, type Queue } from './ui/Library';
 import { Progress } from './ui/Progress';
 import { SettingsPage } from './ui/SettingsPage';
 
@@ -19,20 +29,22 @@ const Player = lazy(() => import('./ui/Player').then((m) => ({ default: m.Player
 const Recorder = lazy(() => import('./ui/Recorder').then((m) => ({ default: m.Recorder })));
 const loading = <div className="loading muted">Loading…</div>;
 
-type View = { name: 'library' | 'progress' | 'settings' | 'record' } | { name: 'play'; song: Song };
+type View = { name: 'library' | 'progress' | 'settings' | 'record' } | { name: 'play'; song: Song; queue?: Queue };
 
 export function App() {
   const [view, setView] = useState<View>({ name: 'library' });
   const [mine, setMine] = useState<Song[]>([]);
   const [bests, setBests] = useState<Best[]>([]);
+  const [collections, setCollections] = useState<Collection[]>([]);
   const settings = useSettings();
   const builtin = useMemo(() => builtinSongs(), []);
 
   const refresh = useCallback(async () => {
     try {
-      const [songs, b] = await Promise.all([listSongs(), listBests()]);
+      const [songs, b, cols] = await Promise.all([listSongs(), listBests(), listCollections()]);
       setMine(songs);
       setBests(b);
+      setCollections(cols);
     } catch (err) {
       console.warn('Storage unavailable', err);
     }
@@ -78,17 +90,44 @@ export function App() {
     setBusVolume('echo', settings.echoVolume);
   }, [settings]);
 
-  const onImport = async (file: File) => {
-    const song = await importSongFile(file);
-    await saveSong(song);
+  const onImport = async (files: File[], into: Collection | null) => {
+    const imported: Song[] = [];
+    const errors: string[] = [];
+    for (const file of files) {
+      try {
+        const song = await importSongFile(file);
+        await saveSong(song);
+        imported.push(song);
+      } catch (err) {
+        errors.push(`${file.name}: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+    if (into && imported.length) await saveCollection(addSongs(into, imported.map((s) => s.id)));
     await refresh();
-    setView({ name: 'play', song });
+    // A single file opens straight away; a batch stays in the library to be organised.
+    if (files.length === 1 && imported.length === 1 && !into) setView({ name: 'play', song: imported[0] });
+    return { imported, errors };
+  };
+
+  const onCreateCollection = async (name: string, songIds: string[] = []) => {
+    const c = addSongs(newCollection(name), songIds);
+    await saveCollection(c);
+    await refresh();
+    return c;
   };
 
   if (view.name === 'play') {
+    const { queue } = view;
     return (
       <Suspense fallback={loading}>
-        <Player key={view.song.id} song={view.song} onExit={() => setView({ name: 'library' })} onSaved={refresh} />
+        <Player
+          key={view.song.id}
+          song={view.song}
+          queue={queue}
+          onNavigate={(song) => setView({ name: 'play', song, queue })}
+          onExit={() => setView({ name: 'library' })}
+          onSaved={refresh}
+        />
       </Suspense>
     );
   }
@@ -116,12 +155,24 @@ export function App() {
             builtin={builtin}
             mine={mine}
             bests={bests}
-            onOpen={(song) => setView({ name: 'play', song })}
+            collections={collections}
+            onOpen={(song, queue) => setView({ name: 'play', song, queue })}
             onImport={onImport}
             onRecord={() => setView({ name: 'record' })}
             onDelete={async (song) => {
               if (!window.confirm(`Delete "${song.title}" from your songs?`)) return;
               await deleteSong(song.id);
+              await Promise.all(withoutSong(collections, song.id).map(saveCollection));
+              await refresh();
+            }}
+            onCreateCollection={onCreateCollection}
+            onSaveCollection={async (c) => {
+              setCollections((cols) => cols.map((x) => (x.id === c.id ? c : x)));
+              await saveCollection(c);
+              await refresh();
+            }}
+            onDeleteCollection={async (c) => {
+              await deleteCollection(c.id);
               await refresh();
             }}
           />

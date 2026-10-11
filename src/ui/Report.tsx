@@ -9,6 +9,8 @@ interface Props {
   onClose: () => void;
   onPracticeBars?: (from: number, to: number) => void;
   onAgain?: () => void;
+  onNext?: () => void;
+  nextTitle?: string;
 }
 
 const W = 640;
@@ -174,7 +176,7 @@ function DynamicsChart({ report, song }: { report: Report; song: Song | null }) 
   );
 }
 
-export function ReportView({ report, song, onClose, onPracticeBars, onAgain }: Props) {
+export function ReportView({ report, song, onClose, onPracticeBars, onAgain, onNext, nextTitle }: Props) {
   const [replaying, setReplaying] = useState(false);
   const stopRef = useRef<(() => void) | null>(null);
   useEffect(() => () => stopRef.current?.(), []);
@@ -327,8 +329,13 @@ export function ReportView({ report, song, onClose, onPracticeBars, onAgain }: P
           )}
           <span className="spacer" />
           {onAgain && (
-            <button className="btn primary" onClick={onAgain}>
+            <button className={`btn ${onNext ? '' : 'primary'}`} onClick={onAgain}>
               Play again
+            </button>
+          )}
+          {onNext && (
+            <button className="btn primary" onClick={onNext} title={nextTitle}>
+              Next piece ›
             </button>
           )}
           <button className="btn" onClick={onClose}>

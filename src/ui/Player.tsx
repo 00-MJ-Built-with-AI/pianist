@@ -9,6 +9,7 @@ import type { Hand, Song } from '../music/types';
 import { addPracticeTime, saveSession, updateBest } from '../store/db';
 import { loadPref, savePref, useSettings } from '../store/settings';
 import { InputBar } from './InputBar';
+import type { Queue } from './Library';
 import { ReportView } from './Report';
 import { ScoreView, type ScoreHandle } from './ScoreView';
 import { Stage } from './stage';
@@ -25,11 +26,13 @@ const MODE_HELP: Record<ModeKind, string> = {
 
 interface Props {
   song: Song;
+  queue?: Queue; // the collection being practised, in order
+  onNavigate?: (song: Song) => void;
   onExit: () => void;
   onSaved?: () => void;
 }
 
-export function Player({ song, onExit, onSaved }: Props) {
+export function Player({ song, queue, onNavigate, onExit, onSaved }: Props) {
   const settings = useSettings();
   const [mode, setMode] = useState<ModeKind>(() => loadPref<ModeKind>('mode', 'learn'));
   const [hands, setHands] = useState<Record<Hand, boolean>>(() => loadPref(`hands.${song.id}`, { R: true, L: true }));
@@ -57,6 +60,9 @@ export function Player({ song, onExit, onSaved }: Props) {
   const sessionRef = useRef<Session | null>(null);
   const pointerPitch = useRef<number | null>(null);
 
+  const queueIndex = queue ? queue.songs.findIndex((s) => s.id === song.id) : -1;
+  const prevSong = queue && queueIndex > 0 ? queue.songs[queueIndex - 1] : null;
+  const nextSong = queue && queueIndex >= 0 && queueIndex < queue.songs.length - 1 ? queue.songs[queueIndex + 1] : null;
   const userHands = useMemo<Hand[]>(() => (['R', 'L'] as Hand[]).filter((h) => hands[h]), [hands]);
   const bothHands = userHands.length === 2;
   const showScore = scoreOn[mode] && !!song.scoreXml;
@@ -310,6 +316,19 @@ export function Player({ song, onExit, onSaved }: Props) {
             {[song.composer, `${song.timeSig[0]}/${song.timeSig[1]}`, `${song.bpm} bpm`].filter(Boolean).join(' · ')}
           </span>
         </div>
+        {queue && queueIndex >= 0 && (
+          <div className="queue-nav" title={`Collection: ${queue.name}`}>
+            <button className="icon-btn" disabled={!prevSong || running} onClick={() => prevSong && onNavigate?.(prevSong)} aria-label="Previous piece">
+              ‹
+            </button>
+            <span className="small">
+              <span className="muted">{queue.name}</span> {queueIndex + 1}/{queue.songs.length}
+            </span>
+            <button className="icon-btn" disabled={!nextSong || running} onClick={() => nextSong && onNavigate?.(nextSong)} aria-label="Next piece">
+              ›
+            </button>
+          </div>
+        )}
         <nav className="mode-tabs" aria-label="Practice mode">
           {MODES.map((m) => (
             <button
@@ -476,6 +495,8 @@ export function Player({ song, onExit, onSaved }: Props) {
             setReport(null);
             void start();
           }}
+          onNext={nextSong ? () => onNavigate?.(nextSong) : undefined}
+          nextTitle={nextSong?.title}
         />
       )}
     </div>
