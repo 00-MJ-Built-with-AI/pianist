@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from 'react';
 import { resumeAudio, setBusVolume } from './audio/audio';
 import { piano } from './audio/piano';
 import { inputHub } from './input/hub';
@@ -11,10 +11,13 @@ import { deleteSong, listBests, listSongs, saveSong, type Best } from './store/d
 import { useSettings } from './store/settings';
 import { InputBar } from './ui/InputBar';
 import { Library } from './ui/Library';
-import { Player } from './ui/Player';
 import { Progress } from './ui/Progress';
-import { Recorder } from './ui/Recorder';
 import { SettingsPage } from './ui/SettingsPage';
+
+// The practice screens carry the notation engine; load them when first opened.
+const Player = lazy(() => import('./ui/Player').then((m) => ({ default: m.Player })));
+const Recorder = lazy(() => import('./ui/Recorder').then((m) => ({ default: m.Recorder })));
+const loading = <div className="loading muted">Loading…</div>;
 
 type View = { name: 'library' | 'progress' | 'settings' | 'record' } | { name: 'play'; song: Song };
 
@@ -83,7 +86,11 @@ export function App() {
   };
 
   if (view.name === 'play') {
-    return <Player key={view.song.id} song={view.song} onExit={() => setView({ name: 'library' })} onSaved={refresh} />;
+    return (
+      <Suspense fallback={loading}>
+        <Player key={view.song.id} song={view.song} onExit={() => setView({ name: 'library' })} onSaved={refresh} />
+      </Suspense>
+    );
   }
 
   return (
@@ -122,14 +129,16 @@ export function App() {
         {view.name === 'progress' && <Progress songs={[...builtin, ...mine]} />}
         {view.name === 'settings' && <SettingsPage />}
         {view.name === 'record' && (
-          <Recorder
-            onCancel={() => setView({ name: 'library' })}
-            onSaved={async (song) => {
-              await saveSong(song);
-              await refresh();
-              setView({ name: 'play', song });
-            }}
-          />
+          <Suspense fallback={loading}>
+            <Recorder
+              onCancel={() => setView({ name: 'library' })}
+              onSaved={async (song) => {
+                await saveSong(song);
+                await refresh();
+                setView({ name: 'play', song });
+              }}
+            />
+          </Suspense>
         )}
       </main>
     </div>

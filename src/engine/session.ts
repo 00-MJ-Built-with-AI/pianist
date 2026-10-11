@@ -152,9 +152,23 @@ export class Session implements SessionContext {
     });
   }
 
+  private recentMic: Array<{ pitch: number; time: number }> = [];
+
+  /** The microphone sometimes reports a strong overtone of a note as a second note. */
+  private isLikelyOvertone(n: PlayedNote): boolean {
+    this.recentMic = this.recentMic.filter((r) => Math.abs(n.time - r.time) < 150);
+    const overtone = this.recentMic.some((r) => [12, 19, 24].includes(n.pitch - r.pitch));
+    this.recentMic.push({ pitch: n.pitch, time: n.time });
+    return overtone && !this.controller.targets(performance.now()).includes(n.pitch);
+  }
+
   private onNote(n: PlayedNote) {
     if (this.status !== 'running') return;
     this.lastSource = n.source;
+    if (n.source === 'mic' && this.isLikelyOvertone(n)) {
+      this.keyKinds.set(n.pitch, 'neutral');
+      return;
+    }
     this.record(n.time, 'on', n.pitch, n.velocity);
     const kind = this.controller.onNote(n);
     this.keyKinds.set(n.pitch, kind);
@@ -165,7 +179,8 @@ export class Session implements SessionContext {
     this.controller.update(now);
     const clamp = this.controller.clampBeat();
     this.appSched.run(this.clock, now, clamp, this.region.endBeat);
-    this.clickSched.run(this.clock, now, clamp, this.metronome);
+    const countIn = this.opts.mode === 'roll' && !this.opts.rollWait ? this.region.startBeat : -Infinity;
+    this.clickSched.run(this.clock, now, clamp, this.metronome, countIn);
     if (this.controller.isComplete(now)) {
       if (this.opts.loop && this.opts.mode !== 'listen') this.completePass(now);
       else this.finish(now, true);
@@ -182,7 +197,7 @@ export class Session implements SessionContext {
     this.lastPass = { steps: this.controller.stepResults(), extras: this.controller.extras(), judgments: this.controller.judgments() };
     let msg = `Pass ${this.passes.length}: ${Math.round(acc * 100)}%`;
     if (this.opts.autoSpeedUp && clean && this.rate < 1 - 1e-6) {
-      this.setRate(Math.min(1, this.rate + AUTO_SPEED_STEP));
+      this.setRate(Math.round(Math.min(1, this.rate + AUTO_SPEED_STEP) * 100) / 100);
       msg += ` — tempo up to ${Math.round(this.rate * 100)}%`;
     } else if (!clean) {
       msg += ' — again, slowly and cleanly';

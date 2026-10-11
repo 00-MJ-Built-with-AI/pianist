@@ -37,6 +37,17 @@ const percentile = (xs: number[], p: number) => {
 };
 const clamp01 = (x: number) => Math.max(0, Math.min(1, x));
 
+/** Least-squares line time = a + b·beat. */
+function fitLine(pts: Array<{ beat: number; time: number }>): { a: number; b: number } | null {
+  if (pts.length < 2) return null;
+  const mx = mean(pts.map((p) => p.beat));
+  const my = mean(pts.map((p) => p.time));
+  const sxx = pts.reduce((a, p) => a + (p.beat - mx) ** 2, 0);
+  if (sxx <= 0) return null;
+  const b = pts.reduce((a, p) => a + (p.beat - mx) * (p.time - my), 0) / sxx;
+  return { a: my - b * mx, b };
+}
+
 function barLabel(song: Song, from: number, to: number): string {
   const a = song.measures[from].number;
   const b = song.measures[to].number;
@@ -74,25 +85,18 @@ export function analyze(input: AnalysisInput): Report {
     .map((s) => ({ beat: s.beat, measure: s.measure, time: s.played.length ? Math.min(...s.played.map((p) => p.time)) : NaN }))
     .filter((o) => !Number.isNaN(o.time));
 
-  // Least-squares line time = a + b·beat; residuals show rushing and dragging against the player's own pulse.
+  // Timing is judged against the player's local pulse (a line through the neighbouring notes), so a
+  // deliberate tempo change doesn't make every note look early or late; drift shows in the tempo curve.
   const timing: Report['timing'] = [];
   let playedBpm: number | null = null;
-  if (onsets.length >= 3 && input.mode !== 'learn') {
-    const xs = onsets.map((o) => o.beat);
-    const ys = onsets.map((o) => o.time);
-    const mx = mean(xs);
-    const my = mean(ys);
-    const sxx = xs.reduce((a, x) => a + (x - mx) ** 2, 0);
-    const sxy = xs.reduce((a, x, i) => a + (x - mx) * (ys[i] - my), 0);
-    if (sxx > 0) {
-      const b = sxy / sxx;
-      const a = my - b * mx;
-      if (b > 0) playedBpm = 60000 / b;
-      for (const o of onsets) {
-        const devMs = isRoll ? 0 : o.time - (a + b * o.beat);
-        timing.push({ beat: o.beat, devMs, measure: o.measure });
-      }
-    }
+  if (onsets.length >= 3 && input.mode !== 'learn' && !isRoll) {
+    const global = fitLine(onsets);
+    if (global && global.b > 0) playedBpm = 60000 / global.b;
+    onsets.forEach((o, i) => {
+      const neighbours = onsets.slice(Math.max(0, i - 3), i).concat(onsets.slice(i + 1, i + 4));
+      const local = fitLine(neighbours) ?? global;
+      if (local) timing.push({ beat: o.beat, devMs: o.time - (local.a + local.b * o.beat), measure: o.measure });
+    });
   }
   if (isRoll) {
     // Piano Roll runs at a fixed tempo, so deviations are measured against the clock itself.
@@ -194,11 +198,13 @@ export function analyze(input: AnalysisInput): Report {
       if (exp) velocities.push({ beat: s.beat, velocity: p.velocity, expected: exp.velocity, hand: exp.hand });
     }
   }
+  // Only MIDI reports how hard keys were struck; other inputs give a fixed or estimated velocity.
+  const hasVelocity = input.source === 'midi';
   const vels = velocities.map((v) => v.velocity);
-  const dynamicsRange = vels.length >= 8 ? percentile(vels, 0.9) - percentile(vels, 0.1) : null;
+  const dynamicsRange = hasVelocity && vels.length >= 8 ? percentile(vels, 0.9) - percentile(vels, 0.1) : null;
   const rh = velocities.filter((v) => v.hand === 'R').map((v) => v.velocity);
   const lh = velocities.filter((v) => v.hand === 'L').map((v) => v.velocity);
-  const balance = rh.length >= 4 && lh.length >= 4 ? mean(rh) - mean(lh) : null;
+  const balance = hasVelocity && rh.length >= 4 && lh.length >= 4 ? mean(rh) - mean(lh) : null;
 
   // Evenness: velocity spread inside runs of short single notes in one hand.
   const runVels: number[][] = [];
@@ -215,7 +221,7 @@ export function analyze(input: AnalysisInput): Report {
     }
   }
   if (run.length >= 4) runVels.push(run);
-  const evenness = runVels.length ? mean(runVels.map(std)) : null;
+  const evenness = hasVelocity && runVels.length ? mean(runVels.map(std)) : null;
 
   // Chord spread: how far apart notes meant to sound together actually land.
   const spreads = considered
@@ -451,12 +457,16 @@ function buildTips(t: TipInput): string[] {
     tips.push('Dynamics, balance and pedalling are only analysed with a MIDI connection; the microphone gives notes and timing.');
   }
 
-  if (tips.length === 0 || t.score >= 92) {
-    tips.unshift(
+  if (tips.length === 0) {
+    tips.push(
       t.rate < 1
         ? `Clean run! Try raising the tempo to ${Math.min(150, Math.round((t.rate + 0.1) * 100))}%.`
-        : 'Excellent! This piece is ready. Try Audition mode for a full performance check.',
+        : t.mode === 'audition'
+          ? 'A polished performance. Well done!'
+          : 'Excellent! This piece is ready. Try Audition mode for a full performance check.',
     );
+  } else if (t.score >= 92) {
+    tips.unshift('Notes and rhythm are clean. Now polish the musical details:');
   }
   return tips.slice(0, 6);
 }

@@ -19,6 +19,7 @@ const EDGE_FRAMES = 9; // frames at the right edge the model can't judge yet (~1
 const MIN_PITCH = 21;
 const REFRACTORY_MS = 90;
 const OFF_FRAMES = 3;
+const RECHECK_FRAMES = 4;
 
 export interface MicState {
   state: 'off' | 'loading' | 'on' | 'error';
@@ -130,6 +131,12 @@ class Detector {
 
 let detector = new Detector();
 
+/** Development hook: receives raw model activations. */
+let debugSink: ((x: { time: number; pitch: number; onset: number; frame: number }) => void) | null = null;
+export function setMicDebug(sink: typeof debugSink): void {
+  debugSink = sink;
+}
+
 /** Maps a stream sample index to performance.now() time. */
 let clockRef = { sample: 0, perf: 0 };
 
@@ -172,36 +179,57 @@ async function analyse() {
   const lastFrame = nFrames - 1 - EDGE_FRAMES;
   const at = (arr: Float32Array, f: number, k: number) => arr[f * P + k];
 
+  const peakOver = (arr: Float32Array, k: number, from: number, to: number) => {
+    let m = 0;
+    for (let g = Math.max(0, from); g <= Math.min(nFrames - 1, to); g++) m = Math.max(m, at(arr, g, k));
+    return m;
+  };
+  // An overtone of a note struck at the same moment sounds much weaker than the note itself;
+  // a real octave played on top is louder relative to its partner.
+  const OVERTONES: Array<[interval: number, maxRatio: number]> = [
+    [12, 0.6],
+    [19, 0.45],
+    [24, 0.45],
+  ];
+  const isOvertone = (f: number, k: number, level: number) =>
+    OVERTONES.some(([iv, ratio]) => {
+      const lk = k - iv;
+      if (lk < 0 || peakOver(onsets, lk, f - 3, f + 3) < 0.45) return false;
+      const lowLevel = peakOver(frames, lk, f, f + 3);
+      return lowLevel > 0 && level / lowLevel < ratio;
+    });
+
   for (let f = 1; f <= lastFrame; f++) {
     const sample = windowStart + f * FFT_HOP;
-    if (sample < d.processedUpTo || sample < 0) continue;
+    // Frames near the previous window's edge are checked again: the model sees them better with more context.
+    if (sample < d.processedUpTo - RECHECK_FRAMES * FFT_HOP || sample < 0) continue;
+    const fresh = sample >= d.processedUpTo;
     const time = perfOfSample(sample) - settings.micLatency;
+    if (debugSink && fresh) {
+      for (let k = 0; k < P; k++) {
+        const o = at(onsets, f, k);
+        if (o > 0.15) debugSink({ time, pitch: k + MIN_PITCH, onset: o, frame: at(frames, f, k) });
+      }
+    }
 
     // Onsets: local peaks of the onset curve with the note actually sounding.
-    const found: Array<{ k: number; o: number }> = [];
     for (let k = 0; k < P; k++) {
       const o = at(onsets, f, k);
       if (o < onsetThresh) continue;
       if (o < at(onsets, f - 1, k) || o < at(onsets, f + 1, k)) continue;
-      const sounding = Math.max(at(frames, f, k), at(frames, f + 1, k), at(frames, Math.min(nFrames - 1, f + 2), k));
-      if (sounding < frameThresh) continue;
-      found.push({ k, o });
-    }
-    // Drop overtones (octave, twelfth, double octave) that are weaker than a note found below them.
-    const keep = found.filter(
-      ({ k, o }) => !found.some((g) => (k - g.k === 12 || k - g.k === 19 || k - g.k === 24) && g.o > o * 1.1),
-    );
-    for (const { k, o } of keep) {
+      const level = peakOver(frames, k, f, f + 3);
+      if (level < frameThresh || isOvertone(f, k, level)) continue;
       const pitch = k + MIN_PITCH;
       const prev = d.lastOnset.get(pitch);
-      if (prev !== undefined && time - prev < REFRACTORY_MS) continue;
+      if (prev !== undefined && Math.abs(time - prev) < REFRACTORY_MS) continue;
       if (isAppSound(pitch, time)) continue;
       d.lastOnset.set(pitch, time);
       if (d.active.has(pitch)) inputHub.noteOff(pitch, time, 'mic');
       d.active.set(pitch, { since: time, low: 0 });
-      const velocity = Math.round(Math.max(20, Math.min(120, 30 + o * 70 + at(frames, f, k) * 20)));
+      const velocity = Math.round(Math.max(20, Math.min(120, 30 + o * 70 + level * 20)));
       inputHub.noteOn({ pitch, velocity, time, source: 'mic' });
     }
+    if (!fresh) continue;
     // Releases: the note's frame activation stays low for a few frames.
     for (const [pitch, a] of d.active) {
       const k = pitch - MIN_PITCH;

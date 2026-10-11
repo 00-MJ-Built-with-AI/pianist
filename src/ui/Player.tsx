@@ -57,7 +57,7 @@ export function Player({ song, onExit, onSaved }: Props) {
   const sessionRef = useRef<Session | null>(null);
   const pointerPitch = useRef<number | null>(null);
 
-  const userHands: Hand[] = (['R', 'L'] as Hand[]).filter((h) => hands[h]);
+  const userHands = useMemo<Hand[]>(() => (['R', 'L'] as Hand[]).filter((h) => hands[h]), [hands]);
   const bothHands = userHands.length === 2;
   const showScore = scoreOn[mode] && !!song.scoreXml;
   const loopBeats = loopOn
@@ -140,6 +140,7 @@ export function Player({ song, onExit, onSaved }: Props) {
       if (s.status === 'finished') void finished(s);
     });
     sessionRef.current = s;
+    if (import.meta.env.DEV) (window as unknown as { __pianistSession?: Session }).__pianistSession = s;
     setHud(s.hud(performance.now()));
     setRunning(true);
   }, [song, mode, userHands, bothHands, otherHand, rate, metronome, loopOn, loop, autoSpeed, rollWait, finished]);
@@ -159,8 +160,8 @@ export function Player({ song, onExit, onSaved }: Props) {
   }, []);
 
   useEffect(() => {
-    if (!running) resetView();
-  }, [mode, hands, loopOn, loop, rollWait, otherHand, running, resetView]);
+    resetView();
+  }, [mode, hands, loopOn, loop, rollWait, otherHand, resetView]);
 
   // Live tweaks during a run
   useEffect(() => {
@@ -306,7 +307,7 @@ export function Player({ song, onExit, onSaved }: Props) {
         <div className="song-title">
           <h1>{song.title}</h1>
           <span className="muted">
-            {song.composer} · {song.timeSig[0]}/{song.timeSig[1]} · {song.bpm} bpm
+            {[song.composer, `${song.timeSig[0]}/${song.timeSig[1]}`, `${song.bpm} bpm`].filter(Boolean).join(' · ')}
           </span>
         </div>
         <nav className="mode-tabs" aria-label="Practice mode">

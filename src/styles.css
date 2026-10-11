@@ -245,6 +245,13 @@ section {
   text-align: center;
 }
 
+.loading {
+  display: grid;
+  place-items: center;
+  height: 100%;
+  min-height: 200px;
+}
+
 /* ---------- library */
 
 .library.dragging {

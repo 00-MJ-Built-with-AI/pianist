@@ -4,6 +4,7 @@ import { songFromText } from './notation';
 import { parsePitch, spell } from './pitch';
 import { buildSteps } from './steps';
 import { DIVISIONS } from './musicxml';
+import { tidyDurations } from './tidy';
 
 describe('pitch', () => {
   it('parses names', () => {
@@ -91,5 +92,38 @@ describe('musicxml', () => {
     const xml = s.scoreXml!;
     expect(xml).toContain('<tie type="start"/>');
     expect(xml).toContain('<tie type="stop"/>');
+  });
+});
+
+describe('tidyDurations', () => {
+  it('closes small gaps, trims overlaps and rounds the last note', () => {
+    const n = (pitch: number, start: number, dur: number, hand: 'R' | 'L' = 'R') => ({ pitch, start, dur, hand, velocity: 80 });
+    const out = tidyDurations([n(64, 0, 0.9), n(62, 1, 1.2), n(60, 2, 0.4), n(62, 3, 1.84), n(48, 0, 3.7, 'L')], 4);
+    expect(out.map((x) => x.dur)).toEqual([1, 1, 0.5, 2, 4]);
+  });
+});
+
+describe('recording to song', () => {
+  it('quantizes played notes, splits hands and tidies lengths', async () => {
+    const { buildRecordedSong } = await import('./recording');
+    const beat = 600; // 100 bpm
+    const t0 = 1000;
+    const ev = (type: 'on' | 'off', pitch: number, b: number, jitter = 0) => ({ type, pitch, velocity: 70, t: t0 + b * beat + jitter });
+    const song = buildRecordedSong(
+      [
+        ev('on', 64, 0, 12), ev('off', 64, 0.9),
+        ev('on', 62, 1, -15), ev('off', 62, 1.85),
+        ev('on', 48, 0, 5), ev('on', 60, 2, 8), ev('off', 48, 3.9), ev('off', 60, 3.9),
+        ev('on', 30, -3), // played during the count-in: dropped
+      ],
+      { t0, stopAt: t0 + 5 * beat, bpm: 100, timeSig: [4, 4], split: 60, grid: 4, title: 'T' },
+    )!;
+    expect(song.notes.map((n) => [n.pitch, n.start, n.dur, n.hand])).toEqual([
+      [48, 0, 4, 'L'],
+      [64, 0, 1, 'R'],
+      [62, 1, 1, 'R'],
+      [60, 2, 2, 'R'],
+    ]);
+    expect(song.scoreXml).toContain('<work-title>T</work-title>');
   });
 });

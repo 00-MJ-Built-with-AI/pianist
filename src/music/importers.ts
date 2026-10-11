@@ -1,6 +1,7 @@
 import { Midi } from '@tonejs/midi';
 import { songToMusicXml } from './musicxml';
 import { finalizeSong } from './song';
+import { tidyDurations } from './tidy';
 import type { Hand, Measure, Note, Song } from './types';
 
 const KEY_FIFTHS: Record<string, number> = {
@@ -95,7 +96,7 @@ export function importMidi(data: ArrayBuffer, fallbackTitle: string): Song {
     bpm,
     timeSig,
     keyFifths,
-    notes,
+    notes: tidyDurations(notes, GRID),
     source: 'midi',
     createdAt: Date.now(),
   });

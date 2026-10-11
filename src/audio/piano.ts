@@ -58,6 +58,23 @@ class PianoSampler {
     return best;
   }
 
+  /** Renders a note into any (e.g. offline) audio context; used to test the microphone detector. */
+  renderNote(ctx: BaseAudioContext, dest: AudioNode, pitch: number, velocity: number, when: number, duration: number): void {
+    const sample = this.nearest(pitch);
+    if (!sample) return;
+    const src = ctx.createBufferSource();
+    src.buffer = sample[1];
+    src.playbackRate.value = Math.pow(2, (pitch - sample[0]) / 12);
+    const gain = ctx.createGain();
+    const level = Math.pow(velocity / 127, 1.7) * 0.9 + 0.02;
+    gain.gain.setValueAtTime(level, when);
+    gain.gain.setValueAtTime(level, when + duration);
+    gain.gain.setTargetAtTime(0, when + duration, 0.09);
+    src.connect(gain).connect(dest);
+    src.start(when);
+    src.stop(when + duration + 1);
+  }
+
   /** Starts a note. `when` is AudioContext time; with `duration` the note is released automatically. */
   noteOn(pitch: number, velocity: number, opts: { when?: number; duration?: number; bus?: Bus } = {}): void {
     const ctx = audioCtx();

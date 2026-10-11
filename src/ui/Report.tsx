@@ -63,7 +63,10 @@ function TimingChart({ report, song }: { report: Report; song: Song | null }) {
   return (
     <section className="chart">
       <h4>
-        Timing <span className="muted">dots above the line came late, below came early (vs. your own pulse)</span>
+        Timing{' '}
+        <span className="muted">
+          dots above the line came late, below came early ({report.mode === 'roll' ? 'against the beat' : 'against your own pulse'})
+        </span>
       </h4>
       <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none">
         <Axis song={song} minBeat={minB} maxBeat={maxB} h={H} />
@@ -128,7 +131,8 @@ function DynamicsChart({ report, song }: { report: Report; song: Song | null }) 
   const H = 140;
   const minB = Math.min(...pts.map((p) => p.beat));
   const maxB = Math.max(...pts.map((p) => p.beat), minB + 1);
-  const x = (b: number) => ((b - minB) / (maxB - minB)) * W;
+  const plotW = W - 30; // room for the pp…ff labels
+  const x = (b: number) => ((b - minB) / (maxB - minB)) * plotW;
   const y = (v: number) => H - 8 - (v / 127) * (H - 16);
   const hasMarks = (song?.dynamics.length ?? 0) > 0;
   return (
@@ -140,10 +144,12 @@ function DynamicsChart({ report, song }: { report: Report; song: Song | null }) 
         </span>
       </h4>
       <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none">
-        <Axis song={song} minBeat={minB} maxBeat={maxB} h={H} />
+        <g transform={`scale(${plotW / W},1)`}>
+          <Axis song={song} minBeat={minB} maxBeat={maxB} h={H} />
+        </g>
         {hasMarks &&
           pts.map((p, i) => (
-            <line key={`e${i}`} x1={x(p.beat) - 3} x2={x(p.beat) + 3} y1={y(p.expected)} y2={y(p.expected)} className="target" />
+            <line key={`e${i}`} x1={x(p.beat) - 5} x2={x(p.beat) + 5} y1={y(p.expected)} y2={y(p.expected)} className="target" />
           ))}
         {pts.map((p, i) => (
           <circle key={i} cx={x(p.beat)} cy={y(p.velocity)} r={2.6} className={p.hand === 'R' ? 'dot-r' : 'dot-l'} />

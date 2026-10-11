@@ -1,5 +1,7 @@
 import { audioCtx, resumeAudio } from '../audio/audio';
 import { piano } from '../audio/piano';
+import { useState } from 'react';
+import type { SelfTestResult } from '../input/mic/selftest';
 import { updateSettings, useSettings } from '../store/settings';
 
 function Slider(props: { label: string; hint?: string; value: number; min: number; max: number; step: number; unit?: string; onChange: (v: number) => void }) {
@@ -21,6 +23,16 @@ function Slider(props: { label: string; hint?: string; value: number; min: numbe
 
 export function SettingsPage() {
   const s = useSettings();
+  const [selfTest, setSelfTest] = useState<SelfTestResult | 'running' | string | null>(null);
+  const runSelfTest = async () => {
+    setSelfTest('running');
+    try {
+      const { runMicSelfTest } = await import('../input/mic/selftest');
+      setSelfTest(await runMicSelfTest());
+    } catch (err) {
+      setSelfTest(err instanceof Error ? err.message : String(err));
+    }
+  };
   const test = async () => {
     await resumeAudio();
     await piano.load();
@@ -87,6 +99,26 @@ export function SettingsPage() {
           unit="%"
           onChange={(v) => updateSettings({ micSensitivity: v })}
         />
+        <div className="setting">
+          <div>
+            <b>Check the microphone detector</b>
+            <div className="muted small">
+              Feeds a short piano clip straight into the note detector (no microphone needed) to check it works on this computer.
+            </div>
+            {selfTest === 'running' && <div className="small">Running… about 8 seconds.</div>}
+            {typeof selfTest === 'string' && selfTest !== 'running' && <div className="small error">{selfTest}</div>}
+            {selfTest && typeof selfTest === 'object' && (
+              <div className="small">
+                Heard <b>{selfTest.hits}</b> of {selfTest.expected.length} notes, {selfTest.falsePositives} extra
+                {selfTest.meanOffsetMs !== null ? `, timing within ${Math.abs(selfTest.meanOffsetMs)} ms` : ''}.
+                <div className="muted">Detected: {selfTest.detected.map((d) => d.pitch).join(' ')}</div>
+              </div>
+            )}
+          </div>
+          <button className="btn" disabled={selfTest === 'running'} onClick={() => void runSelfTest()}>
+            Run check
+          </button>
+        </div>
       </section>
 
       <section>

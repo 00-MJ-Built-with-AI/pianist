@@ -62,13 +62,14 @@ export class ClickScheduler {
     if (this.idx < 0) this.idx = this.clicks.length;
   }
 
-  run(clock: Clock, now: number, limitBeat: number, enabled: boolean): void {
+  /** Clicks before `alwaysBefore` (the count-in) sound even when the metronome is off. */
+  run(clock: Clock, now: number, limitBeat: number, enabled: boolean, alwaysBefore = -Infinity): void {
     if (!clock.running) return;
     const horizon = Math.min(clock.beatAt(now + LOOKAHEAD_MS), limitBeat + 1e-6);
     while (this.idx < this.clicks.length && this.clicks[this.idx].beat < horizon) {
       const c = this.clicks[this.idx++];
       const t = clock.timeAt(c.beat);
-      if (!enabled || t < now - TOO_LATE_MS) continue;
+      if ((!enabled && c.beat >= alwaysBefore - 1e-6) || t < now - TOO_LATE_MS) continue;
       metronomeClick(perfToAudio(t), c.accent);
     }
   }

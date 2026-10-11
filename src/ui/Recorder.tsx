@@ -3,10 +3,10 @@ import { perfToAudio, resumeAudio } from '../audio/audio';
 import { metronomeClick, piano } from '../audio/piano';
 import type { KeyKind } from '../engine/controllers';
 import { inputHub } from '../input/hub';
-import { songToMusicXml } from '../music/musicxml';
 import { pitchName } from '../music/pitch';
-import { clickUnit, finalizeSong, measureLength } from '../music/song';
-import type { Hand, Note, Song } from '../music/types';
+import { buildRecordedSong, type RecordedNoteEvent as Ev } from '../music/recording';
+import { clickUnit, measureLength } from '../music/song';
+import type { Song } from '../music/types';
 import { ScoreView, type ScoreHandle } from './ScoreView';
 import { Stage } from './stage';
 
@@ -15,71 +15,12 @@ interface Props {
   onSaved: (song: Song) => void;
 }
 
-interface Ev {
-  type: 'on' | 'off';
-  pitch: number;
-  velocity: number;
-  t: number;
-}
-
 const TIMES: Array<[string, [number, number]]> = [
   ['4/4', [4, 4]],
   ['3/4', [3, 4]],
   ['2/4', [2, 4]],
   ['6/8', [6, 8]],
 ];
-
-export function buildRecordedSong(
-  events: Ev[],
-  opts: { t0: number; stopAt: number; bpm: number; timeSig: [number, number]; split: number; grid: number; title: string },
-): Song | null {
-  const bps = opts.bpm / 60;
-  const toBeat = (t: number) => ((t - opts.t0) / 1000) * bps;
-  const open = new Map<number, Ev>();
-  const notes: Array<Omit<Note, 'id' | 'measure'>> = [];
-  const add = (on: Ev, offT: number) => {
-    let start = toBeat(on.t);
-    if (start < -0.5) return; // played before the count-in finished
-    start = Math.max(0, Math.round(start * opts.grid) / opts.grid);
-    const dur = Math.max(1 / opts.grid, Math.round((toBeat(offT) - toBeat(on.t)) * opts.grid) / opts.grid);
-    const hand: Hand = on.pitch >= opts.split ? 'R' : 'L';
-    notes.push({ pitch: on.pitch, start, dur, hand, velocity: on.velocity });
-  };
-  for (const e of events) {
-    if (e.type === 'on') {
-      const prev = open.get(e.pitch);
-      if (prev) add(prev, e.t);
-      open.set(e.pitch, e);
-    } else {
-      const on = open.get(e.pitch);
-      if (on) add(on, e.t);
-      open.delete(e.pitch);
-    }
-  }
-  for (const on of open.values()) add(on, opts.stopAt);
-  if (!notes.length) return null;
-  // Same pitch twice on one grid point: keep the longer one.
-  const unique = new Map<string, (typeof notes)[number]>();
-  for (const n of notes) {
-    const k = `${n.pitch}@${n.start}`;
-    const p = unique.get(k);
-    if (!p || p.dur < n.dur) unique.set(k, n);
-  }
-  const song = finalizeSong({
-    id: `rec-${Date.now().toString(36)}`,
-    title: opts.title.trim() || 'My recording',
-    composer: 'Me',
-    level: 2,
-    bpm: opts.bpm,
-    timeSig: opts.timeSig,
-    keyFifths: 0,
-    notes: [...unique.values()],
-    source: 'recording',
-    createdAt: Date.now(),
-  });
-  song.scoreXml = songToMusicXml(song);
-  return song;
-}
 
 export function Recorder({ onCancel, onSaved }: Props) {
   const [title, setTitle] = useState('My recording');
@@ -183,7 +124,7 @@ export function Recorder({ onCancel, onSaved }: Props) {
     const s = buildRecordedSong(events.current, { t0: t0.current, stopAt: performance.now(), bpm, timeSig, split, grid, title });
     setSong(s);
     setStatus(s ? 'review' : 'idle');
-    if (!s) setDisplay('Nothing was played. Try again.');
+    setDisplay(s ? '' : 'Nothing was played. Try again.');
   };
 
   const preview = async () => {
