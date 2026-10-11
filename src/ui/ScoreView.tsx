@@ -1,0 +1,225 @@
+import { OpenSheetMusicDisplay } from 'opensheetmusicdisplay';
+import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react';
+import type { Song } from '../music/types';
+
+export interface ScoreHandle {
+  setBeat(beat: number): void;
+}
+
+interface Props {
+  song: Song;
+  heat: Array<{ index: number; score: number | null }> | null;
+  loop: { from: number; to: number } | null;
+  onMeasureClick?: (index: number, shift: boolean) => void;
+  showPlayhead: boolean;
+}
+
+interface Box {
+  x: number;
+  w: number;
+}
+
+const ANCHOR = 0.28; // playhead position as a fraction of the strip width
+const UNIT_PX = 10; // OSMD units → pixels at zoom 1
+const ZOOM = 0.85;
+
+function heatColor(score: number): string {
+  if (score >= 0.9) return '56,201,138';
+  if (score >= 0.7) return '255,184,77';
+  return '255,93,108';
+}
+
+/** One long line of real notation that scrolls under a fixed playhead. */
+export const ScoreView = forwardRef<ScoreHandle, Props>(function ScoreView(
+  { song, heat, loop, onMeasureClick, showPlayhead },
+  ref,
+) {
+  const hostRef = useRef<HTMLDivElement>(null);
+  const innerRef = useRef<HTMLDivElement>(null);
+  const sheetRef = useRef<HTMLDivElement>(null);
+  const mapRef = useRef<{ beats: number[]; xs: number[] }>({ beats: [0], xs: [0] });
+  const [boxes, setBoxes] = useState<Box[]>([]);
+  const [band, setBand] = useState<{ top: number; height: number }>({ top: 0, height: 0 });
+  const [error, setError] = useState<string | null>(null);
+  const [ready, setReady] = useState(false);
+  const lastX = useRef(NaN);
+
+  useEffect(() => {
+    const el = sheetRef.current;
+    if (!el || !song.scoreXml) return;
+    let cancelled = false;
+    setReady(false);
+    setError(null);
+    el.innerHTML = '';
+    const osmd = new OpenSheetMusicDisplay(el, {
+      autoResize: false,
+      backend: 'svg',
+      drawTitle: false,
+      drawSubtitle: false,
+      drawComposer: false,
+      drawLyricist: false,
+      drawCredits: false,
+      drawPartNames: false,
+      drawMetronomeMarks: false,
+      renderSingleHorizontalStaffline: true,
+      autoBeam: true,
+      defaultColorMusic: '#e8e4da',
+      followCursor: false,
+    });
+    (async () => {
+      try {
+        await osmd.load(song.scoreXml!);
+        if (cancelled) return;
+        osmd.zoom = ZOOM;
+        osmd.render();
+        const scale = UNIT_PX * ZOOM;
+
+        // Measure boxes (index = bar index of the song)
+        const list = osmd.GraphicSheet.MeasureList;
+        const bx: Box[] = [];
+        let top = Infinity;
+        let bottom = -Infinity;
+        for (const staves of list) {
+          const gm = staves.find((m) => m);
+          if (!gm) {
+            bx.push({ x: 0, w: 0 });
+            continue;
+          }
+          const ps = gm.PositionAndShape;
+          bx.push({ x: ps.AbsolutePosition.x * scale, w: ps.Size.width * scale });
+          for (const m of staves) {
+            if (!m) continue;
+            top = Math.min(top, m.PositionAndShape.AbsolutePosition.y * scale);
+            bottom = Math.max(bottom, (m.PositionAndShape.AbsolutePosition.y + 4) * scale);
+          }
+        }
+
+        // Beat → x from the cursor positions
+        const beats: number[] = [];
+        const xs: number[] = [];
+        const cursor = osmd.cursor;
+        cursor.show();
+        cursor.reset();
+        let guard = 0;
+        while (!cursor.Iterator.EndReached && guard++ < 20000) {
+          const beat = cursor.Iterator.currentTimeStamp.RealValue * 4;
+          const x = parseFloat(cursor.cursorElement.style.left);
+          if (Number.isFinite(x) && (!beats.length || beat > beats[beats.length - 1] + 1e-6)) {
+            beats.push(beat);
+            xs.push(x + 6);
+          } else if (beats.length && beat < beats[beats.length - 1]) {
+            break; // a repeat jumped back; follow the score only once
+          }
+          cursor.next();
+        }
+        cursor.hide();
+        const lastBox = bx[bx.length - 1];
+        if (lastBox) {
+          beats.push(song.totalBeats);
+          xs.push(lastBox.x + lastBox.w);
+        }
+        if (!beats.length) {
+          beats.push(0);
+          xs.push(0);
+        }
+        mapRef.current = { beats, xs };
+        lastX.current = NaN;
+        const svg = el.querySelector('svg');
+        if (svg && hostRef.current) {
+          const h = svg.getBoundingClientRect().height;
+          hostRef.current.style.height = `${Math.min(260, Math.max(150, Math.ceil(h) + 10))}px`;
+        }
+        setBoxes(bx);
+        setBand(Number.isFinite(top) ? { top: top - 18, height: bottom - top + 36 } : { top: 0, height: 0 });
+        setReady(true);
+      } catch (err) {
+        if (!cancelled) setError(err instanceof Error ? err.message : String(err));
+      }
+    })();
+    return () => {
+      cancelled = true;
+      try {
+        osmd.clear();
+      } catch {
+        // already cleared
+      }
+    };
+  }, [song.scoreXml, song.totalBeats]);
+
+  useImperativeHandle(
+    ref,
+    () => ({
+      setBeat(beat: number) {
+        const inner = innerRef.current;
+        const host = hostRef.current;
+        if (!inner || !host) return;
+        const { beats, xs } = mapRef.current;
+        let x: number;
+        if (beat <= beats[0]) x = xs[0] - (beats[0] - beat) * 30;
+        else if (beat >= beats[beats.length - 1]) x = xs[xs.length - 1];
+        else {
+          let lo = 0;
+          let hi = beats.length - 1;
+          while (hi - lo > 1) {
+            const mid = (lo + hi) >> 1;
+            if (beats[mid] <= beat) lo = mid;
+            else hi = mid;
+          }
+          const k = (beat - beats[lo]) / (beats[hi] - beats[lo]);
+          x = xs[lo] + (xs[hi] - xs[lo]) * k;
+        }
+        if (Math.abs(x - lastX.current) < 0.25) return;
+        lastX.current = x;
+        inner.style.transform = `translateX(${Math.round(host.clientWidth * ANCHOR - x)}px)`;
+      },
+    }),
+    [],
+  );
+
+  const onClick = (e: React.MouseEvent) => {
+    if (!onMeasureClick || !innerRef.current) return;
+    const x = e.clientX - innerRef.current.getBoundingClientRect().left;
+    const i = boxes.findIndex((b) => x >= b.x && x < b.x + b.w);
+    if (i >= 0) onMeasureClick(i, e.shiftKey);
+  };
+
+  return (
+    <div className="score" ref={hostRef}>
+      {error && <div className="score-msg">Couldn't draw this score: {error}</div>}
+      {!ready && !error && <div className="score-msg">Engraving…</div>}
+      <div className="score-inner" ref={innerRef} onClick={onClick}>
+        <div ref={sheetRef} className="score-sheet" />
+        {ready && loop && boxes[loop.from] && boxes[loop.to] && (
+          <div
+            className="score-loop"
+            style={{
+              left: boxes[loop.from].x,
+              width: boxes[loop.to].x + boxes[loop.to].w - boxes[loop.from].x,
+              top: band.top,
+              height: band.height,
+            }}
+          />
+        )}
+        {ready &&
+          heat?.map((h) =>
+            h.score === null || !boxes[h.index] ? null : (
+              <div
+                key={h.index}
+                className="score-heat"
+                title={`Bar ${song.measures[h.index]?.number}: ${Math.round(h.score * 100)}%`}
+                style={{
+                  left: boxes[h.index].x,
+                  width: boxes[h.index].w,
+                  top: band.top,
+                  height: band.height,
+                  background: `rgba(${heatColor(h.score)},0.16)`,
+                  borderBottom: `4px solid rgba(${heatColor(h.score)},0.9)`,
+                }}
+              />
+            ),
+          )}
+      </div>
+      {showPlayhead && <div className="score-playhead" style={{ left: `${ANCHOR * 100}%` }} />}
+    </div>
+  );
+});
