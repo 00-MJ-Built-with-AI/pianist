@@ -4,6 +4,7 @@ import { keyboardBase, onKeyboardBase } from '../input/keyboard';
 import { connectMidi, midiStatus, onMidiStatus } from '../input/midi';
 import { micState, onMicState, startMic, stopMic } from '../input/mic/mic';
 import { pitchName } from '../music/pitch';
+import { Calibrate } from './Calibrate';
 
 function useMidi() {
   return useSyncExternalStore(onMidiStatus, midiStatus, midiStatus);
@@ -18,6 +19,7 @@ export function InputBar() {
   const midi = useMidi();
   const mic = useMic();
   const [open, setOpen] = useState(false);
+  const [calibrating, setCalibrating] = useState(false);
   const [active, setActive] = useState(false);
   const [lastNote, setLastNote] = useState<string | null>(null);
   const [base, setBase] = useState(keyboardBase());
@@ -114,9 +116,21 @@ export function InputBar() {
               </div>
             </div>
           </div>
-          <div className="last-note muted small">Last note: {lastNote ?? '—'}</div>
+          <div className="last-note muted small">
+            Last note: {lastNote ?? '—'}
+            <button
+              className="link-btn"
+              onClick={() => {
+                setOpen(false);
+                setCalibrating(true);
+              }}
+            >
+              Calibrate timing…
+            </button>
+          </div>
         </div>
       )}
+      {calibrating && <Calibrate onClose={() => setCalibrating(false)} />}
     </div>
   );
 }

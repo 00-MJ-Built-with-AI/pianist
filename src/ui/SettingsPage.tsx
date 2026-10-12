@@ -2,6 +2,7 @@ import { audioCtx, resumeAudio } from '../audio/audio';
 import { piano } from '../audio/piano';
 import { useState } from 'react';
 import type { SelfTestResult } from '../input/mic/selftest';
+import { Calibrate } from './Calibrate';
 import { updateSettings, useSettings } from '../store/settings';
 
 function Slider(props: { label: string; hint?: string; value: number; min: number; max: number; step: number; unit?: string; onChange: (v: number) => void }) {
@@ -24,6 +25,7 @@ function Slider(props: { label: string; hint?: string; value: number; min: numbe
 export function SettingsPage() {
   const s = useSettings();
   const [selfTest, setSelfTest] = useState<SelfTestResult | 'running' | string | null>(null);
+  const [calibrating, setCalibrating] = useState(false);
   const runSelfTest = async () => {
     setSelfTest('running');
     try {
@@ -69,12 +71,21 @@ export function SettingsPage() {
 
       <section>
         <h2>Timing</h2>
+        <div className="setting">
+          <div>
+            <b>Calibrate timing</b>
+            <div className="muted small">Play along with 12 clicks; Pianist measures your piano's delay and sets the correction below.</div>
+          </div>
+          <button className="btn primary" onClick={() => setCalibrating(true)}>
+            Calibrate…
+          </button>
+        </div>
         <Slider
           label="MIDI latency correction"
           hint="If Piano Roll says you're always late, raise this a little."
           value={s.midiLatency}
           min={0}
-          max={150}
+          max={250}
           step={5}
           unit=" ms"
           onChange={(v) => updateSettings({ midiLatency: v })}
@@ -84,7 +95,7 @@ export function SettingsPage() {
           hint="Extra correction for slow audio interfaces or Bluetooth."
           value={s.micLatency}
           min={0}
-          max={200}
+          max={300}
           step={5}
           unit=" ms"
           onChange={(v) => updateSettings({ micLatency: v })}
@@ -142,6 +153,7 @@ export function SettingsPage() {
         </label>
       </section>
 
+      {calibrating && <Calibrate onClose={() => setCalibrating(false)} />}
       <section className="about muted small">
         <h2>About</h2>
         <p>

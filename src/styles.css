@@ -1132,6 +1132,66 @@ section {
   border-top: 1px solid var(--line);
 }
 
+/* ---------- calibration */
+
+.calibrate {
+  width: min(520px, 100%);
+}
+
+.calibrate h2 {
+  margin-bottom: 10px;
+}
+
+.calibrate p {
+  line-height: 1.55;
+}
+
+.cal-stage {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 18px;
+  padding: 30px 0 20px;
+}
+
+.cal-dot {
+  width: 90px;
+  height: 90px;
+  border-radius: 50%;
+  background: var(--bg3);
+  border: 2px solid var(--line);
+}
+
+.cal-dot.beat {
+  animation: cal-pulse 0.6s ease-out;
+}
+
+@keyframes cal-pulse {
+  from {
+    background: var(--accent);
+    transform: scale(1.12);
+  }
+  to {
+    background: var(--bg3);
+    transform: scale(1);
+  }
+}
+
+.cal-text {
+  font-size: 20px;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+}
+
+.link-btn {
+  border: none;
+  background: none;
+  color: var(--accent);
+  cursor: pointer;
+  float: right;
+  padding: 0;
+}
+
 /* ---------- progress */
 
 .tiles {
