@@ -23,7 +23,15 @@ export interface SessionOptions {
   autoSpeedUp: boolean;
   /** Wait for the right notes (Learn, Piano Roll) or for the player's pace (Practice); off keeps going at tempo. */
   wait: boolean;
+  /** Timing windows and pass rules; defaults to the "normal" strictness. */
+  tuning?: import('../store/settings').Tuning;
+  countInBars?: number; // timed modes: bars of count-in clicks (0 = none)
+  clicks?: { subdivision: 'beat' | 'eighth'; accent: boolean; sound: ClickSound };
+  /** Softly play the player's own notes as a guide. */
+  guide?: boolean;
 }
+
+export type ClickSound = 'beep' | 'wood' | 'cowbell';
 
 /** What happened to each note of the score. */
 export const NoteMark = {

@@ -27,6 +27,7 @@ export interface CoachOptions {
   to: number;
   startRate: number;
   targetRate: number;
+  cleanPass?: number; // accuracy that counts as clean (default 0.9)
 }
 
 const pct = (r: number) => `${Math.round(r * 100)}%`;
@@ -40,6 +41,7 @@ export function buildCoachPlan(song: Song, o: CoachOptions): CoachStep[] {
   const both = hands.length === 2;
   const steps: CoachStep[] = [];
   const slow = o.startRate;
+  const passTarget = o.cleanPass ?? 0.9;
 
   if (both) {
     steps.push({
@@ -51,7 +53,7 @@ export function buildCoachPlan(song: Song, o: CoachOptions): CoachStep[] {
       wait: true,
       rate: slow,
       autoSpeedUp: false,
-      passTarget: 0.9,
+      passTarget,
     });
     steps.push({
       id: 'lh',
@@ -62,7 +64,7 @@ export function buildCoachPlan(song: Song, o: CoachOptions): CoachStep[] {
       wait: true,
       rate: slow,
       autoSpeedUp: false,
-      passTarget: 0.9,
+      passTarget,
     });
   }
   steps.push({
@@ -74,7 +76,7 @@ export function buildCoachPlan(song: Song, o: CoachOptions): CoachStep[] {
     wait: true,
     rate: slow,
     autoSpeedUp: false,
-    passTarget: 0.9,
+    passTarget,
   });
   if (o.targetRate > slow + 1e-6) {
     steps.push({
@@ -86,7 +88,7 @@ export function buildCoachPlan(song: Song, o: CoachOptions): CoachStep[] {
       wait: true,
       rate: slow,
       autoSpeedUp: true,
-      passTarget: 0.9,
+      passTarget,
       finishAtRate: o.targetRate,
     });
   }
@@ -99,7 +101,7 @@ export function buildCoachPlan(song: Song, o: CoachOptions): CoachStep[] {
     wait: false,
     rate: o.targetRate,
     autoSpeedUp: false,
-    passTarget: 0.9,
+    passTarget,
   });
   return steps;
 }

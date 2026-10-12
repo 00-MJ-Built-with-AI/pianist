@@ -6,6 +6,7 @@ import { analyze } from './analysis';
 import { Clock } from './clock';
 import { FollowController, LearnController, RollController, type Flash, type SessionContext } from './controllers';
 import { NoteMark } from './types';
+import { TUNING_PRESETS } from '../store/settings';
 
 const song = (id: string) => builtinSongs().find((s) => s.id === id)!;
 
@@ -23,6 +24,7 @@ function context(s: Song, hands: Hand[], bpm = s.bpm): SessionContext {
     leadIn: 1,
     flash: (f) => flashes.push(f),
     inputLag: () => 0,
+    tuning: TUNING_PRESETS.normal,
   };
 }
 
@@ -203,5 +205,34 @@ describe('moving around while playing', () => {
     r.seek(4, 5000);
     const n = ctx2.userNotes.find((x) => x.start === 4)!;
     expect(r.onNote(press(n.pitch, ctx2.clock.timeAt(4)))).toBe('good');
+  });
+});
+
+describe('practice settings', () => {
+  it('clicks on eighths with an accented downbeat', async () => {
+    const { buildClicks } = await import('./scheduler');
+    const s = song('ode-to-joy');
+    const clicks = buildClicks(s, 0, 4, { subdivision: 'eighth', accent: true, sound: 'wood' });
+    const countIn = clicks.filter((c) => c.beat < 0);
+    expect(countIn).toHaveLength(8);
+    expect(countIn.map((c) => c.level).slice(0, 3)).toEqual(['accent', 'sub', 'beat']);
+    expect(clicks.find((c) => c.beat === 0)!.level).toBe('accent');
+    const noAccent = buildClicks(s, 0, 4, { subdivision: 'beat', accent: false, sound: 'beep' });
+    expect(noAccent.every((c) => c.level === 'beat')).toBe(true);
+  });
+
+  it('judges more strictly with the strict preset', () => {
+    const s = song('mary-lamb');
+    const strict = { ...context(s, ['R']), tuning: TUNING_PRESETS.strict };
+    const r = new RollController(strict);
+    r.start(0);
+    const n = strict.userNotes[0];
+    r.onNote(press(n.pitch, strict.clock.timeAt(n.start) + 130)); // inside normal (160), outside strict (110)
+    expect(r.judgments().wrong).toBe(1);
+    const relaxed = { ...context(s, ['R']), tuning: TUNING_PRESETS.relaxed };
+    const r2 = new RollController(relaxed);
+    r2.start(0);
+    r2.onNote(press(n.pitch, relaxed.clock.timeAt(n.start) + 90)); // Perfect when relaxed (100)
+    expect(r2.judgments().perfect).toBe(1);
   });
 });

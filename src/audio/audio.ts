@@ -2,7 +2,7 @@ let ctx: AudioContext | null = null;
 let master: GainNode | null = null;
 const buses = new Map<Bus, GainNode>();
 
-export type Bus = 'echo' | 'accomp' | 'metronome';
+export type Bus = 'echo' | 'accomp' | 'metronome' | 'guide';
 
 export function audioCtx(): AudioContext {
   if (!ctx) {

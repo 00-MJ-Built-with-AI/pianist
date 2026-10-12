@@ -9,7 +9,7 @@ import { CoachDialog } from './CoachDialog';
 import { inputHub } from '../input/hub';
 import type { Hand, Song } from '../music/types';
 import { addPracticeTime, saveSession, updateBest } from '../store/db';
-import { loadPref, savePref, useSettings } from '../store/settings';
+import { getSettings, loadPref, savePref, tuningOf, useSettings } from '../store/settings';
 import { ExportMenu } from './ExportMenu';
 import { InputBar } from './InputBar';
 import type { Queue } from './Library';
@@ -168,7 +168,19 @@ export function Player({ song: baseSong, queue, preset, nextAction, onNavigate, 
       sessionRef.current?.dispose();
       setReport(null);
       setHeat(null);
-      const s = new Session(song, opts, performance.now());
+      // Strictness, count-in, metronome and guide settings apply to every run.
+      const st = getSettings();
+      const s = new Session(
+        song,
+        {
+          tuning: tuningOf(st),
+          countInBars: st.countInBars,
+          clicks: { subdivision: st.clickSubdivision, accent: st.clickAccent, sound: st.clickSound },
+          guide: st.guideNotes,
+          ...opts,
+        },
+        performance.now(),
+      );
       let seenPasses = 0;
       s.subscribe(() => {
         if (s.message) setToast(s.message);
@@ -246,7 +258,7 @@ export function Player({ song: baseSong, queue, preset, nextAction, onNavigate, 
 
   const startCoach = (o: CoachOptions) => {
     setCoachDialog(false);
-    coachRef.current = { steps: buildCoachPlan(song, o), index: 0, from: o.from, to: o.to };
+    coachRef.current = { steps: buildCoachPlan(song, { ...o, cleanPass: tuningOf(getSettings()).cleanPass }), index: 0, from: o.from, to: o.to };
     runStepRef.current(0);
   };
 

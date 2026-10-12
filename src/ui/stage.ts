@@ -1,6 +1,7 @@
 import type { Flash, KeyKind } from '../engine/controllers';
 import { NoteMark } from '../engine/types';
 import { isBlackKey, noteLabel, type NameStyle } from '../music/pitch';
+import { suggestFingering } from '../music/fingering';
 import type { Hand, Song } from '../music/types';
 
 export interface StageFrame {
@@ -20,13 +21,18 @@ export interface StageFrame {
   preferFlats: boolean;
 }
 
-/** How the keyboard and falling notes are labelled and sized. */
+/** How the keyboard and falling notes look. */
 export interface StageDisplay {
   keyLabels: 'none' | 'c' | 'white' | 'all';
   nameStyle: NameStyle;
   noteLabels: boolean;
   showTargets: boolean;
   keyboardSize: 'small' | 'medium' | 'large';
+  fallSeconds: number;
+  noteColors: 'hand' | 'pitch' | 'finger';
+  noteGlow: boolean;
+  theme: 'dark' | 'light' | 'contrast';
+  handColors: { R: string; L: string };
 }
 
 export const DEFAULT_DISPLAY: StageDisplay = {
@@ -35,6 +41,11 @@ export const DEFAULT_DISPLAY: StageDisplay = {
   noteLabels: true,
   showTargets: true,
   keyboardSize: 'medium',
+  fallSeconds: 3.2,
+  noteColors: 'hand',
+  noteGlow: true,
+  theme: 'dark',
+  handColors: { R: '#4c9dff', L: '#38c98a' },
 };
 
 const KEYBOARD_SIZES = {
@@ -43,7 +54,7 @@ const KEYBOARD_SIZES = {
   large: { k: 0.33, min: 90, max: 210 },
 };
 
-const COLORS = {
+const DARK = {
   bg: '#0d0f14',
   lane: '#11141b',
   laneDark: '#0b0d12',
@@ -64,9 +75,54 @@ const COLORS = {
   wrong: '#ff5d6c',
   neutral: '#a3a9ff',
   hitLine: '#ffffff',
+  keyOutline: '',
+  labelInk: '#7a7466',
 };
 
-const SECONDS_VISIBLE = 3.2;
+type Palette = typeof DARK;
+
+const THEMES: Record<StageDisplay['theme'], Palette> = {
+  dark: DARK,
+  light: {
+    ...DARK,
+    bg: '#f3f1ec',
+    lane: '#ebe8e1',
+    laneDark: '#e1ded6',
+    octaveLine: '#d3cfc6',
+    barLine: '#cbc6bb',
+    barText: '#8a8f99',
+    auto: '#c9c5bc',
+    white: '#ffffff',
+    whiteShade: '#e7e3da',
+    black: '#23262d',
+    neutral: '#6f78ff',
+    hitLine: '#000000',
+  },
+  contrast: {
+    ...DARK,
+    bg: '#000000',
+    lane: '#000000',
+    laneDark: '#0c0c0c',
+    octaveLine: '#3d3d3d',
+    barLine: '#5a5a5a',
+    barText: '#bbbbbb',
+    auto: '#4a4a4a',
+    white: '#ffffff',
+    black: '#000000',
+    keyOutline: '#ffffff',
+    labelInk: '#000000',
+  },
+};
+
+/** A lighter version of a colour, for notes already played. */
+function lighten(hex: string, k: number): string {
+  const n = parseInt(hex.slice(1), 16);
+  const ch = (shift: number) => Math.round(((n >> shift) & 255) + (255 - ((n >> shift) & 255)) * k);
+  return `rgb(${ch(16)},${ch(8)},${ch(0)})`;
+}
+
+const FINGER_COLORS = ['', '#ff6b6b', '#ffa94d', '#ffd43b', '#69db7c', '#4dabf7'];
+const pitchColor = (pitch: number, light: number) => `hsl(${(pitch % 12) * 30}, 75%, ${light}%)`;
 
 function roundRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number) {
   const rr = Math.min(r, w / 2, h / 2);
@@ -91,6 +147,8 @@ export class Stage {
   private keyW = new Float32Array(128);
   private song: Song | null = null;
   private kbSize: StageDisplay['keyboardSize'] = 'medium';
+  private C: Palette = DARK;
+  private fingers = new Map<number, number>();
 
   constructor(private canvas: HTMLCanvasElement) {
     this.ctx = canvas.getContext('2d')!;
@@ -98,6 +156,7 @@ export class Stage {
 
   setSong(song: Song | null, fullKeyboard: boolean): void {
     this.song = song;
+    this.fingers = song ? suggestFingering(song) : new Map();
     if (!song || fullKeyboard || song.notes.length === 0) {
       this.setRange(21, 108);
       return;
@@ -184,24 +243,27 @@ export class Stage {
     const { ctx } = this;
     ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
     this.kbSize = f.display.keyboardSize;
+    this.C = { ...THEMES[f.display.theme ?? 'dark'], R: f.display.handColors.R, L: f.display.handColors.L };
+    this.C.Rhit = lighten(this.C.R, 0.55);
+    this.C.Lhit = lighten(this.C.L, 0.55);
     const kbH = this.keyboardHeight();
     const fallH = this.h - kbH;
-    ctx.fillStyle = COLORS.bg;
+    ctx.fillStyle = this.C.bg;
     ctx.fillRect(0, 0, this.w, this.h);
 
     // Lanes
     for (let p = this.lo; p <= this.hi; p++) {
       if (isBlackKey(p)) {
-        ctx.fillStyle = COLORS.laneDark;
+        ctx.fillStyle = this.C.laneDark;
         ctx.fillRect(this.keyX[p], 0, this.keyW[p], fallH);
       } else if (p % 12 === 0) {
-        ctx.fillStyle = COLORS.octaveLine;
+        ctx.fillStyle = this.C.octaveLine;
         ctx.fillRect(this.keyX[p], 0, 1, fallH);
       }
     }
 
     const song = this.song;
-    const visibleBeats = Math.max(2, SECONDS_VISIBLE * f.bps);
+    const visibleBeats = Math.max(2, (f.display.fallSeconds || 3.2) * f.bps);
     const ppb = fallH / visibleBeats;
     const yOf = (beat: number) => fallH - (beat - f.beat) * ppb;
 
@@ -220,10 +282,10 @@ export class Stage {
       for (const m of song.measures) {
         const y = yOf(m.start);
         if (y < -2 || y > fallH) continue;
-        ctx.fillStyle = COLORS.barLine;
+        ctx.fillStyle = this.C.barLine;
         ctx.fillRect(0, Math.round(y), this.w, 1);
         if (m.number > 0) {
-          ctx.fillStyle = COLORS.barText;
+          ctx.fillStyle = this.C.barText;
           ctx.fillText(String(m.number), 6, y - 3);
         }
       }
@@ -263,19 +325,32 @@ export class Stage {
       const h = Math.max(4, yBottom - yTop - 2);
       const mark = f.marks ? f.marks[n.id] : NoteMark.Pending;
       const user = mark !== NoteMark.Auto && f.userHands.includes(n.hand);
+      const C = this.C;
+      const mode = f.display.noteColors;
+      const finger = this.fingers.get(n.id) ?? 0;
+      const base =
+        mode === 'pitch' ? pitchColor(n.pitch, 62) : mode === 'finger' && finger ? FINGER_COLORS[finger] : n.hand === 'R' ? C.R : C.L;
+      const played =
+        mode === 'pitch' ? pitchColor(n.pitch, 82) : mode === 'finger' && finger ? lighten(FINGER_COLORS[finger], 0.5) : n.hand === 'R' ? C.Rhit : C.Lhit;
       let fill: string;
-      if (!user) fill = COLORS.auto;
-      else if (f.hideCues) fill = n.hand === 'R' ? COLORS.R : COLORS.L;
-      else if (mark === NoteMark.Hit) fill = n.hand === 'R' ? COLORS.Rhit : COLORS.Lhit;
-      else if (mark === NoteMark.Missed) fill = COLORS.missed;
-      else if (mark === NoteMark.Early || mark === NoteMark.Late) fill = COLORS.off;
-      else fill = n.hand === 'R' ? COLORS.R : COLORS.L;
+      if (!user) fill = C.auto;
+      else if (f.hideCues) fill = base;
+      else if (mark === NoteMark.Hit) fill = played;
+      else if (mark === NoteMark.Missed) fill = C.missed;
+      else if (mark === NoteMark.Early || mark === NoteMark.Late) fill = C.off;
+      else fill = base;
       ctx.globalAlpha = mark === NoteMark.Missed ? 0.55 : 1;
       roundRect(ctx, x, yTop + 1, w, h, 5);
       ctx.fillStyle = fill;
+      const glowing = f.display.noteGlow && user && n.start <= f.beat + 0.05 && n.start + n.dur > f.beat;
+      if (glowing) {
+        ctx.shadowColor = fill;
+        ctx.shadowBlur = 14;
+      }
       ctx.fill();
+      ctx.shadowBlur = 0;
       if (!user) {
-        ctx.fillStyle = n.hand === 'R' ? COLORS.R : COLORS.L;
+        ctx.fillStyle = n.hand === 'R' ? C.R : C.L;
         ctx.globalAlpha = 0.6;
         ctx.fillRect(x, yTop + 3, 2, Math.max(2, h - 4));
       } else if (mark === NoteMark.Pending && n.start <= f.beat + 0.02 && n.start + n.dur > f.beat) {
@@ -287,7 +362,7 @@ export class Stage {
       ctx.globalAlpha = 1;
       if (f.display.noteLabels && h >= 18 && w >= 14 && user) {
         const style = f.display.nameStyle === 'octave' && w < 24 ? 'letter' : f.display.nameStyle;
-        const label = noteLabel(n.pitch, style, f.preferFlats);
+        const label = mode === 'finger' && finger ? String(finger) : noteLabel(n.pitch, style, f.preferFlats);
         ctx.font = `600 ${label.length > 3 && w < 26 ? 8 : 10}px system-ui, sans-serif`;
         ctx.fillStyle = 'rgba(8,10,14,0.75)';
         ctx.fillText(label, x + w / 2, yTop + 1 + h - 3);
@@ -324,8 +399,8 @@ export class Stage {
     const keyFill = (p: number, base: string): string => {
       const kind = f.held.get(p);
       if (kind !== undefined) {
-        if (f.hideCues) return COLORS.neutral;
-        return kind === 'good' ? COLORS.good : kind === 'wrong' ? COLORS.wrong : COLORS.neutral;
+        if (f.hideCues) return this.C.neutral;
+        return kind === 'good' ? this.C.good : kind === 'wrong' ? this.C.wrong : this.C.neutral;
       }
       return base;
     };
@@ -335,13 +410,13 @@ export class Stage {
       if (isBlackKey(p)) continue;
       const x = this.keyX[p];
       const w = this.keyW[p];
-      ctx.fillStyle = keyFill(p, COLORS.white);
+      ctx.fillStyle = keyFill(p, this.C.white);
       ctx.fillRect(x + 0.5, y0, w - 1, kbH - 2);
       ctx.fillStyle = 'rgba(0,0,0,0.12)';
       ctx.fillRect(x + 0.5, y0 + kbH - 8, w - 1, 6);
       if (targets.has(p) && !f.held.has(p)) {
         const hand = this.handOfTarget(f, p);
-        ctx.fillStyle = hand === 'R' ? COLORS.R : COLORS.L;
+        ctx.fillStyle = hand === 'R' ? this.C.R : this.C.L;
         ctx.globalAlpha = f.waiting ? 0.55 + 0.45 * pulse : 0.9;
         ctx.fillRect(x + 3, y0 + kbH - 26, w - 6, 16);
         ctx.globalAlpha = 1;
@@ -352,7 +427,7 @@ export class Stage {
         const label = noteLabel(p, f.display.nameStyle, f.preferFlats);
         const size = Math.min(11, Math.max(7, w * 0.5));
         ctx.font = `${f.held.has(p) ? '700 ' : ''}${size}px system-ui, sans-serif`;
-        ctx.fillStyle = f.held.has(p) ? '#0d0f14' : '#7a7466';
+        ctx.fillStyle = f.held.has(p) ? '#0d0f14' : this.C.labelInk;
         ctx.fillText(label, x + w / 2, y0 + kbH - 30, w - 2);
       }
     }
@@ -362,12 +437,17 @@ export class Stage {
       if (!isBlackKey(p)) continue;
       const x = this.keyX[p];
       const w = this.keyW[p];
-      ctx.fillStyle = keyFill(p, COLORS.black);
+      ctx.fillStyle = keyFill(p, this.C.black);
       roundRect(ctx, x, y0 - 1, w, bh, 3);
       ctx.fill();
+      if (this.C.keyOutline) {
+        ctx.strokeStyle = this.C.keyOutline;
+        ctx.lineWidth = 1;
+        ctx.stroke();
+      }
       if (targets.has(p) && !f.held.has(p)) {
         const hand = this.handOfTarget(f, p);
-        ctx.fillStyle = hand === 'R' ? COLORS.R : COLORS.L;
+        ctx.fillStyle = hand === 'R' ? this.C.R : this.C.L;
         ctx.globalAlpha = f.waiting ? 0.55 + 0.45 * pulse : 0.95;
         ctx.fillRect(x + 2, y0 + bh - 16, w - 4, 12);
         ctx.globalAlpha = 1;
@@ -421,7 +501,7 @@ export class Stage {
         const k = age / 900;
         ctx.globalAlpha = 1 - k;
         ctx.font = '700 13px system-ui, sans-serif';
-        ctx.fillStyle = bad ? COLORS.wrong : fl.kind === 'perfect' ? '#ffd166' : '#cfe6ff';
+        ctx.fillStyle = bad ? this.C.wrong : fl.kind === 'perfect' ? '#ffd166' : '#cfe6ff';
         ctx.fillText(fl.label, cx, y0 - 22 - 30 * k);
         ctx.globalAlpha = 1;
       }

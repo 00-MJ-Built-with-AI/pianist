@@ -1,15 +1,19 @@
 import type { ModeKind, Report } from '../engine/types';
 import type { Song } from '../music/types';
 import type { Collection } from './collections';
+import { profileDbName } from './profiles';
 
-const DB_NAME = 'pianist';
+const SHARED_DB = 'pianist'; // the song library, shared by all profiles
 const VERSION = 2;
 
-let dbPromise: Promise<IDBDatabase> | null = null;
+const dbs = new Map<string, Promise<IDBDatabase>>();
 
-function open(): Promise<IDBDatabase> {
-  dbPromise ??= new Promise((resolve, reject) => {
-    const req = indexedDB.open(DB_NAME, VERSION);
+/** Opens (and creates or upgrades) a Pianist database by name. */
+export function openDb(name: string): Promise<IDBDatabase> {
+  let p = dbs.get(name);
+  if (p) return p;
+  p = new Promise((resolve, reject) => {
+    const req = indexedDB.open(name, VERSION);
     req.onupgradeneeded = () => {
       const db = req.result;
       const has = (name: string) => db.objectStoreNames.contains(name);
@@ -27,7 +31,8 @@ function open(): Promise<IDBDatabase> {
     req.onsuccess = () => resolve(req.result);
     req.onerror = () => reject(req.error);
   });
-  return dbPromise;
+  dbs.set(name, p);
+  return p;
 }
 
 function promisify<T>(req: IDBRequest<T>): Promise<T> {
@@ -37,10 +42,32 @@ function promisify<T>(req: IDBRequest<T>): Promise<T> {
   });
 }
 
+/** Songs live in the shared database; everything else in the active profile's database. */
 async function store(name: string, mode: IDBTransactionMode = 'readonly'): Promise<IDBObjectStore> {
-  const db = await open();
+  const db = await openDb(name === 'songs' ? SHARED_DB : profileDbName());
   return db.transaction(name, mode).objectStore(name);
 }
+
+/** Every record of one store in a given database (used by backups). */
+export async function readAll<T>(dbName: string, storeName: string): Promise<T[]> {
+  const db = await openDb(dbName);
+  return promisify(db.transaction(storeName).objectStore(storeName).getAll() as IDBRequest<T[]>);
+}
+
+/** Puts records into a store of a given database in one transaction. */
+export async function writeAll(dbName: string, storeName: string, records: unknown[]): Promise<void> {
+  if (!records.length) return;
+  const db = await openDb(dbName);
+  await new Promise<void>((resolve, reject) => {
+    const tx = db.transaction(storeName, 'readwrite');
+    const s = tx.objectStore(storeName);
+    for (const r of records) s.put(r);
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+}
+
+export { SHARED_DB };
 
 /* ---- songs the player added */
 

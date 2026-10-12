@@ -113,6 +113,13 @@ export function App() {
     setBusVolume('accomp', settings.accompVolume);
     setBusVolume('metronome', settings.metronomeVolume);
     setBusVolume('echo', settings.echoVolume);
+    setBusVolume('guide', settings.guideVolume);
+    // Theme and hand colours for the whole interface.
+    const root = document.documentElement;
+    root.dataset.theme = settings.theme;
+    root.style.setProperty('--hand-r', settings.handColors.R);
+    root.style.setProperty('--hand-l', settings.handColors.L);
+    document.querySelector('meta[name="theme-color"]')?.setAttribute('content', settings.theme === 'light' ? '#f6f4ef' : '#0d0f14');
   }, [settings]);
 
   const onImport = async (files: File[], into: Collection | null) => {

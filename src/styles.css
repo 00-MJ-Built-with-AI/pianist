@@ -1,4 +1,7 @@
 :root {
+  --hand-r: #4c9dff;
+  --hand-l: #38c98a;
+  --score-bg: #11141b;
   --bg: #0d0f14;
   --bg2: #141821;
   --bg3: #1b2030;
@@ -15,6 +18,43 @@
   font-family: Inter, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
   color: var(--text);
   background: var(--bg);
+}
+
+:root[data-theme='light'] {
+  --bg: #f6f4ef;
+  --bg2: #ffffff;
+  --bg3: #ece9e2;
+  --line: #d8d3c8;
+  --text: #1d1f24;
+  --muted: #6b707b;
+  --accent: #d49a00;
+  --score-bg: #fbfaf7;
+  color-scheme: light;
+}
+
+:root[data-theme='light'] .btn.primary,
+:root[data-theme='light'] .shelf-chip.active,
+:root[data-theme='light'] .toast {
+  color: #1d1f24;
+  background: #ffd166;
+  border-color: #e0b44a;
+}
+
+:root[data-theme='contrast'] {
+  --bg: #000000;
+  --bg2: #000000;
+  --bg3: #141414;
+  --line: #8a8a8a;
+  --text: #ffffff;
+  --muted: #d0d0d0;
+  --accent: #ffe14d;
+  --score-bg: #000000;
+}
+
+:root[data-theme='contrast'] .btn,
+:root[data-theme='contrast'] .card,
+:root[data-theme='contrast'] .tab.active {
+  border-width: 2px;
 }
 
 * {
@@ -805,15 +845,15 @@ section {
 
 .seg.on.l {
   color: #06150e;
-  background: var(--green);
-  border-color: var(--green);
+  background: var(--hand-l);
+  border-color: var(--hand-l);
   font-weight: 650;
 }
 
 .seg.on.r {
   color: #04101f;
-  background: var(--blue);
-  border-color: var(--blue);
+  background: var(--hand-r);
+  border-color: var(--hand-r);
   font-weight: 650;
 }
 
@@ -864,7 +904,7 @@ section {
   height: 190px;
   flex: none;
   overflow: hidden;
-  background: #11141b;
+  background: var(--score-bg);
   border-bottom: 1px solid var(--line);
 }
 
@@ -924,6 +964,26 @@ section {
   font-weight: 800;
   font-size: 13px;
   text-shadow: 0 0 6px rgba(255, 93, 108, 0.6);
+}
+
+.score.page {
+  height: 44vh;
+  min-height: 220px;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+.score.page .score-inner {
+  position: relative;
+  top: 0;
+}
+
+.score-playhead.page-head {
+  left: 0;
+  top: 0;
+  bottom: auto;
+  height: 120px;
+  transition: transform 0.08s linear;
 }
 
 .score-playhead {
@@ -1295,11 +1355,11 @@ section {
 }
 
 .dot-r {
-  fill: var(--blue);
+  fill: var(--hand-r);
 }
 
 .dot-l {
-  fill: var(--green);
+  fill: var(--hand-l);
 }
 
 .chips {

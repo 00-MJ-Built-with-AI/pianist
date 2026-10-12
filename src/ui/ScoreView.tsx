@@ -3,7 +3,9 @@ import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState }
 import { suggestFingering } from '../music/fingering';
 import { songToMusicXml } from '../music/musicxml';
 import { pitchName } from '../music/pitch';
+import { measureIndexAt } from '../music/song';
 import type { Song } from '../music/types';
+import { useSettings } from '../store/settings';
 
 /** A mistake to show on the sheet music. */
 export interface ScoreMark {
@@ -27,16 +29,27 @@ interface Props {
   fingering?: boolean;
 }
 
-const noteKey = (beat: number, pitch: number) => `${Math.round(beat * 48)}|${pitch}`;
-
+/** A bar's rectangle on the rendered sheet (pixels). */
 interface Box {
   x: number;
   w: number;
+  y: number;
+  h: number;
 }
 
-const ANCHOR = 0.28; // playhead position as a fraction of the strip width
+/** Cursor positions: where each beat sits on the sheet. */
+interface BeatMap {
+  beats: number[];
+  xs: number[];
+  ys: number[]; // top of the system
+  hs: number[]; // height of the system
+}
+
+const ANCHOR = 0.28; // line view: playhead position as a fraction of the strip width
 const UNIT_PX = 10; // OSMD units → pixels at zoom 1
-const ZOOM = 0.85;
+const INK: Record<string, string> = { dark: '#e8e4da', light: '#1d1f24', contrast: '#ffffff' };
+
+const noteKey = (beat: number, pitch: number) => `${Math.round(beat * 48)}|${pitch}`;
 
 function heatColor(score: number): string {
   if (score >= 0.9) return '56,201,138';
@@ -44,36 +57,63 @@ function heatColor(score: number): string {
   return '255,93,108';
 }
 
-/** One long line of real notation that scrolls under a fixed playhead. */
+/**
+ * Real notation that follows the playhead: either one long line scrolling sideways, or whole
+ * pages that scroll down as the music moves to the next system.
+ */
 export const ScoreView = forwardRef<ScoreHandle, Props>(function ScoreView(
   { song, heat, loop, onMeasureClick, showPlayhead, fingering = false },
   ref,
 ) {
+  const settings = useSettings();
+  const zoom = settings.scoreZoom;
+  const page = settings.scoreLayout === 'page';
+  const ink = INK[settings.theme] ?? INK.dark;
+
   // Imported MusicXML keeps its engraving (and its own fingering); generated scores get suggestions.
   const xml = useMemo(
     () => (fingering && song.source !== 'musicxml' ? songToMusicXml(song, { fingering: suggestFingering(song) }) : song.scoreXml),
     [song, fingering],
   );
-  const notePos = useRef(new Map<string, { x: number; y: number }>());
-  const [marks, setMarksState] = useState<ScoreMark[]>([]);
-  const marksSig = useRef('');
   const hostRef = useRef<HTMLDivElement>(null);
   const innerRef = useRef<HTMLDivElement>(null);
   const sheetRef = useRef<HTMLDivElement>(null);
-  const mapRef = useRef<{ beats: number[]; xs: number[] }>({ beats: [0], xs: [0] });
+  const headRef = useRef<HTMLDivElement>(null);
+  const mapRef = useRef<BeatMap>({ beats: [0], xs: [0], ys: [0], hs: [0] });
+  const notePos = useRef(new Map<string, { x: number; y: number }>());
   const [boxes, setBoxes] = useState<Box[]>([]);
-  const [band, setBand] = useState<{ top: number; height: number }>({ top: 0, height: 0 });
   const [error, setError] = useState<string | null>(null);
   const [ready, setReady] = useState(false);
-  const lastX = useRef(NaN);
+  const [marks, setMarksState] = useState<ScoreMark[]>([]);
+  const [width, setWidth] = useState(0);
+  const marksSig = useRef('');
+  const last = useRef({ x: NaN, y: NaN });
+
+  // Page view re-flows when the strip gets noticeably wider or narrower.
+  useEffect(() => {
+    const host = hostRef.current;
+    if (!host || !page) return;
+    let t = 0;
+    const ro = new ResizeObserver(() => {
+      window.clearTimeout(t);
+      t = window.setTimeout(() => setWidth((w) => (Math.abs(w - host.clientWidth) > 40 ? host.clientWidth : w)), 250);
+    });
+    ro.observe(host);
+    setWidth(host.clientWidth);
+    return () => {
+      ro.disconnect();
+      window.clearTimeout(t);
+    };
+  }, [page]);
 
   useEffect(() => {
     const el = sheetRef.current;
-    if (!el || !xml) return;
+    if (!el || !xml || (page && !width)) return;
     let cancelled = false;
     setReady(false);
     setError(null);
     el.innerHTML = '';
+    el.style.width = page ? `${width - 4}px` : '';
     const osmd = new OpenSheetMusicDisplay(el, {
       autoResize: false,
       backend: 'svg',
@@ -84,9 +124,9 @@ export const ScoreView = forwardRef<ScoreHandle, Props>(function ScoreView(
       drawCredits: false,
       drawPartNames: false,
       drawMetronomeMarks: false,
-      renderSingleHorizontalStaffline: true,
+      renderSingleHorizontalStaffline: !page,
       autoBeam: true,
-      defaultColorMusic: '#e8e4da',
+      defaultColorMusic: ink,
       followCursor: false,
       drawFingerings: fingering,
     });
@@ -94,9 +134,9 @@ export const ScoreView = forwardRef<ScoreHandle, Props>(function ScoreView(
       try {
         await osmd.load(xml);
         if (cancelled) return;
-        osmd.zoom = ZOOM;
+        osmd.zoom = zoom;
         osmd.render();
-        const scale = UNIT_PX * ZOOM;
+        const scale = UNIT_PX * zoom;
 
         // Where every notehead is, so mistakes can be marked on it.
         const pos = new Map<string, { x: number; y: number }>();
@@ -117,63 +157,61 @@ export const ScoreView = forwardRef<ScoreHandle, Props>(function ScoreView(
         }
         notePos.current = pos;
 
-        // Measure boxes (index = bar index of the song)
-        const list = osmd.GraphicSheet.MeasureList;
+        // Bar boxes (index = bar index of the song), spanning all staves of the system.
         const bx: Box[] = [];
-        let top = Infinity;
-        let bottom = -Infinity;
-        for (const staves of list) {
-          const gm = staves.find((m) => m);
-          if (!gm) {
-            bx.push({ x: 0, w: 0 });
+        for (const staves of osmd.GraphicSheet.MeasureList) {
+          const present = staves.filter((m) => m);
+          if (!present.length) {
+            bx.push({ x: 0, w: 0, y: 0, h: 0 });
             continue;
           }
-          const ps = gm.PositionAndShape;
-          bx.push({ x: ps.AbsolutePosition.x * scale, w: ps.Size.width * scale });
-          for (const m of staves) {
-            if (!m) continue;
-            top = Math.min(top, m.PositionAndShape.AbsolutePosition.y * scale);
-            bottom = Math.max(bottom, (m.PositionAndShape.AbsolutePosition.y + 4) * scale);
-          }
+          const ps = present[0].PositionAndShape;
+          const top = Math.min(...present.map((m) => m.PositionAndShape.AbsolutePosition.y)) * scale;
+          const bottom = Math.max(...present.map((m) => m.PositionAndShape.AbsolutePosition.y + 4)) * scale;
+          bx.push({ x: ps.AbsolutePosition.x * scale, w: ps.Size.width * scale, y: top - 18, h: bottom - top + 36 });
         }
 
-        // Beat → x from the cursor positions
-        const beats: number[] = [];
-        const xs: number[] = [];
+        // Beat → position from the cursor.
+        const map: BeatMap = { beats: [], xs: [], ys: [], hs: [] };
         const cursor = osmd.cursor;
         cursor.show();
         cursor.reset();
         let guard = 0;
         while (!cursor.Iterator.EndReached && guard++ < 20000) {
           const beat = cursor.Iterator.currentTimeStamp.RealValue * 4;
-          const x = parseFloat(cursor.cursorElement.style.left);
-          if (Number.isFinite(x) && (!beats.length || beat > beats[beats.length - 1] + 1e-6)) {
-            beats.push(beat);
-            xs.push(x + 6);
-          } else if (beats.length && beat < beats[beats.length - 1]) {
+          const st = cursor.cursorElement.style;
+          const x = parseFloat(st.left);
+          if (Number.isFinite(x) && (!map.beats.length || beat > map.beats[map.beats.length - 1] + 1e-6)) {
+            map.beats.push(beat);
+            map.xs.push(x + 6);
+            map.ys.push(parseFloat(st.top) || 0);
+            map.hs.push(parseFloat(st.height) || 120);
+          } else if (map.beats.length && beat < map.beats[map.beats.length - 1]) {
             break; // a repeat jumped back; follow the score only once
           }
           cursor.next();
         }
         cursor.hide();
         const lastBox = bx[bx.length - 1];
-        if (lastBox) {
-          beats.push(song.totalBeats);
-          xs.push(lastBox.x + lastBox.w);
+        if (lastBox && map.beats.length) {
+          map.beats.push(song.totalBeats);
+          map.xs.push(lastBox.x + lastBox.w);
+          map.ys.push(map.ys[map.ys.length - 1]);
+          map.hs.push(map.hs[map.hs.length - 1]);
         }
-        if (!beats.length) {
-          beats.push(0);
-          xs.push(0);
-        }
-        mapRef.current = { beats, xs };
-        lastX.current = NaN;
+        if (!map.beats.length) Object.assign(map, { beats: [0], xs: [0], ys: [0], hs: [120] });
+        mapRef.current = map;
+        last.current = { x: NaN, y: NaN };
         const svg = el.querySelector('svg');
-        if (svg && hostRef.current) {
+        if (svg && hostRef.current && !page) {
           const h = svg.getBoundingClientRect().height;
-          hostRef.current.style.height = `${Math.min(260, Math.max(150, Math.ceil(h) + 10))}px`;
+          hostRef.current.style.height = `${Math.min(320, Math.max(150, Math.ceil(h) + 10))}px`;
+        } else if (hostRef.current && page) {
+          hostRef.current.style.height = '';
+          hostRef.current.scrollTop = 0;
         }
+        if (innerRef.current) innerRef.current.style.transform = '';
         setBoxes(bx);
-        setBand(Number.isFinite(top) ? { top: top - 18, height: bottom - top + 36 } : { top: 0, height: 0 });
         setReady(true);
       } catch (err) {
         if (!cancelled) setError(err instanceof Error ? err.message : String(err));
@@ -187,7 +225,25 @@ export const ScoreView = forwardRef<ScoreHandle, Props>(function ScoreView(
         // already cleared
       }
     };
-  }, [xml, song.totalBeats, fingering]);
+  }, [xml, song.totalBeats, fingering, zoom, page, width, ink]);
+
+  /** Position of a beat on the sheet. */
+  const locate = (beat: number) => {
+    const { beats, xs, ys, hs } = mapRef.current;
+    if (beat <= beats[0]) return { x: xs[0] - (beats[0] - beat) * 30, y: ys[0], h: hs[0] };
+    if (beat >= beats[beats.length - 1]) return { x: xs[xs.length - 1], y: ys[ys.length - 1], h: hs[hs.length - 1] };
+    let lo = 0;
+    let hi = beats.length - 1;
+    while (hi - lo > 1) {
+      const mid = (lo + hi) >> 1;
+      if (beats[mid] <= beat) lo = mid;
+      else hi = mid;
+    }
+    // Glide within a system; at the end of a line, wait there until the next one starts.
+    const sameLine = Math.abs(ys[hi] - ys[lo]) < 2;
+    const k = (beat - beats[lo]) / (beats[hi] - beats[lo]);
+    return { x: sameLine ? xs[lo] + (xs[hi] - xs[lo]) * k : xs[lo], y: ys[lo], h: hs[lo] };
+  };
 
   useImperativeHandle(
     ref,
@@ -196,24 +252,23 @@ export const ScoreView = forwardRef<ScoreHandle, Props>(function ScoreView(
         const inner = innerRef.current;
         const host = hostRef.current;
         if (!inner || !host) return;
-        const { beats, xs } = mapRef.current;
-        let x: number;
-        if (beat <= beats[0]) x = xs[0] - (beats[0] - beat) * 30;
-        else if (beat >= beats[beats.length - 1]) x = xs[xs.length - 1];
-        else {
-          let lo = 0;
-          let hi = beats.length - 1;
-          while (hi - lo > 1) {
-            const mid = (lo + hi) >> 1;
-            if (beats[mid] <= beat) lo = mid;
-            else hi = mid;
-          }
-          const k = (beat - beats[lo]) / (beats[hi] - beats[lo]);
-          x = xs[lo] + (xs[hi] - xs[lo]) * k;
+        const p = locate(beat);
+        if (Math.abs(p.x - last.current.x) < 0.25 && p.y === last.current.y) return;
+        const newLine = p.y !== last.current.y;
+        last.current = { x: p.x, y: p.y };
+        if (!page) {
+          inner.style.transform = `translateX(${Math.round(host.clientWidth * ANCHOR - p.x)}px)`;
+          return;
         }
-        if (Math.abs(x - lastX.current) < 0.25) return;
-        lastX.current = x;
-        inner.style.transform = `translateX(${Math.round(host.clientWidth * ANCHOR - x)}px)`;
+        const head = headRef.current;
+        if (head) {
+          head.style.transform = `translate(${Math.round(p.x)}px, ${Math.round(p.y)}px)`;
+          head.style.height = `${Math.round(p.h)}px`;
+        }
+        // Keep the current system in view, turning to the next one smoothly.
+        if (newLine && (p.y < host.scrollTop + 10 || p.y + p.h > host.scrollTop + host.clientHeight - 10)) {
+          host.scrollTo({ top: Math.max(0, p.y - 24), behavior: 'smooth' });
+        }
       },
       setMarks(next: ScoreMark[]) {
         const sig = next.map((m) => `${m.kind}${m.beat}:${m.pitch}`).join(',');
@@ -222,41 +277,31 @@ export const ScoreView = forwardRef<ScoreHandle, Props>(function ScoreView(
         setMarksState(next);
       },
     }),
-    [],
+    [page],
   );
-
-  // x of a beat on the strip (for wrong notes, which have no notehead of their own).
-  const xOfBeat = (beat: number) => {
-    const { beats, xs } = mapRef.current;
-    let i = 0;
-    while (i < beats.length - 1 && beats[i + 1] <= beat) i++;
-    return xs[i] - 6;
-  };
 
   const onClick = (e: React.MouseEvent) => {
     if (!onMeasureClick || !innerRef.current) return;
-    const x = e.clientX - innerRef.current.getBoundingClientRect().left;
-    const i = boxes.findIndex((b) => x >= b.x && x < b.x + b.w);
+    const r = innerRef.current.getBoundingClientRect();
+    const x = e.clientX - r.left;
+    const y = e.clientY - r.top;
+    const i = boxes.findIndex((b) => x >= b.x && x < b.x + b.w && (!page || (y >= b.y && y < b.y + b.h)));
     if (i >= 0) onMeasureClick(i, e.shiftKey);
   };
 
+  const loopBoxes = loop ? boxes.slice(loop.from, loop.to + 1).filter((b) => b.w > 0) : [];
+
   return (
-    <div className="score" ref={hostRef}>
+    <div className={`score ${page ? 'page' : ''}`} ref={hostRef}>
       {error && <div className="score-msg">Couldn't draw this score: {error}</div>}
       {!ready && !error && <div className="score-msg">Engraving…</div>}
       <div className="score-inner" ref={innerRef} onClick={onClick}>
         <div ref={sheetRef} className="score-sheet" />
-        {ready && loop && boxes[loop.from] && boxes[loop.to] && (
-          <div
-            className="score-loop"
-            style={{
-              left: boxes[loop.from].x,
-              width: boxes[loop.to].x + boxes[loop.to].w - boxes[loop.from].x,
-              top: band.top,
-              height: band.height,
-            }}
-          />
-        )}
+        {ready &&
+          loopBoxes.map((b, i) => (
+            // One outline per system the loop touches (a single one in line view).
+            <div key={i} className="score-loop" style={{ left: b.x, width: b.w, top: b.y, height: b.h }} />
+          ))}
         {ready &&
           heat?.map((h) =>
             h.score === null || !boxes[h.index] ? null : (
@@ -267,8 +312,8 @@ export const ScoreView = forwardRef<ScoreHandle, Props>(function ScoreView(
                 style={{
                   left: boxes[h.index].x,
                   width: boxes[h.index].w,
-                  top: band.top,
-                  height: band.height,
+                  top: boxes[h.index].y,
+                  height: boxes[h.index].h,
                   background: `rgba(${heatColor(h.score)},0.16)`,
                   borderBottom: `4px solid rgba(${heatColor(h.score)},0.9)`,
                 }}
@@ -278,8 +323,15 @@ export const ScoreView = forwardRef<ScoreHandle, Props>(function ScoreView(
         {ready &&
           marks.map((m, i) => {
             if (m.kind === 'wrong') {
+              const p = locate(m.beat);
+              const box = boxes[measureIndexAt(song.measures, m.beat)];
               return (
-                <div key={`w${i}`} className="score-mark wrong" style={{ left: xOfBeat(m.beat), top: band.top - 2 }} title={`Wrong note: ${pitchName(m.pitch)}`}>
+                <div
+                  key={`w${i}`}
+                  className="score-mark wrong"
+                  style={{ left: p.x - 6, top: (box?.y ?? p.y) - 2 }}
+                  title={`Wrong note: ${pitchName(m.pitch)}`}
+                >
                   ✕
                 </div>
               );
@@ -295,8 +347,9 @@ export const ScoreView = forwardRef<ScoreHandle, Props>(function ScoreView(
               />
             );
           })}
+        {page && showPlayhead && ready && <div className="score-playhead page-head" ref={headRef} />}
       </div>
-      {showPlayhead && <div className="score-playhead" style={{ left: `${ANCHOR * 100}%` }} />}
+      {!page && showPlayhead && <div className="score-playhead" style={{ left: `${ANCHOR * 100}%` }} />}
     </div>
   );
 });

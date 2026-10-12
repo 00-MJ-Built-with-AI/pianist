@@ -2,6 +2,7 @@ import { inputHub, type PlayedNote } from '../input/hub';
 import { buildSteps, type Region, type Step } from '../music/steps';
 import type { Hand, Note } from '../music/types';
 import type { Clock } from './clock';
+import type { Tuning } from '../store/settings';
 import { NoteMark, type ExtraNote, type StepResult } from './types';
 
 export type KeyKind = 'good' | 'wrong' | 'neutral';
@@ -23,6 +24,7 @@ export interface SessionContext {
   marks: Uint8Array;
   targetBps: number;
   leadIn: number;
+  tuning: Tuning;
   flash(f: Flash): void;
   /** How late key presses arrive (the microphone detector reports notes ~0.25 s after they sound). */
   inputLag(): number;
@@ -127,7 +129,8 @@ export class LearnController implements Controller {
     if (!step) return 'neutral';
     if (step.pitches.includes(n.pitch)) {
       // A chord counts when its notes arrive within a second of each other (or are still held).
-      for (const [p, t] of this.hits) if (n.time - t > 1000 && !inputHub.held.has(p)) this.hits.delete(p);
+      const win = this.ctx.tuning.chordWindowMs;
+      for (const [p, t] of this.hits) if (n.time - t > win && !inputHub.held.has(p)) this.hits.delete(p);
       this.hits.set(n.pitch, n.time);
       const res = this.results[this.idx];
       res.played = res.played.filter((x) => x.pitch !== n.pitch);
@@ -417,8 +420,6 @@ export class FollowController implements Controller {
 
 /* ---------------------------------------------------------------- Piano Roll (flowing, judged) */
 
-export const PERFECT_MS = 70;
-export const GOOD_MS = 160;
 
 export class RollController implements Controller {
   private notes: Note[];
@@ -475,8 +476,9 @@ export class RollController implements Controller {
     for (const note of this.notes) {
       if (note.pitch !== n.pitch || this.matched.has(note.id)) continue;
       const dev = n.time - clock.timeAt(note.start);
-      if (dev < -GOOD_MS) break;
-      if (Math.abs(dev) <= GOOD_MS && Math.abs(dev) < Math.abs(bestDev)) {
+      const goodMs = this.ctx.tuning.goodMs;
+      if (dev < -goodMs) break;
+      if (Math.abs(dev) <= goodMs && Math.abs(dev) < Math.abs(bestDev)) {
         best = note;
         bestDev = dev;
       }
@@ -493,7 +495,7 @@ export class RollController implements Controller {
     this.matched.add(best.id);
     const si = this.stepOf.get(best.id)!;
     this.results[si].played.push({ pitch: n.pitch, time: n.time, velocity: n.velocity });
-    const perfect = Math.abs(bestDev) <= PERFECT_MS;
+    const perfect = Math.abs(bestDev) <= this.ctx.tuning.perfectMs;
     if (perfect) this.j.perfect++;
     else this.j.good++;
     this.j.combo++;
@@ -513,7 +515,7 @@ export class RollController implements Controller {
     const judgedUpTo = now - this.ctx.inputLag();
     while (this.missPtr < this.notes.length) {
       const note = this.notes[this.missPtr];
-      if (clock.timeAt(note.start) + GOOD_MS > judgedUpTo) break;
+      if (clock.timeAt(note.start) + this.ctx.tuning.goodMs > judgedUpTo) break;
       this.missPtr++;
       if (this.matched.has(note.id)) continue;
       this.j.miss++;

@@ -202,7 +202,16 @@ class PianoSampler {
 
 export const piano = new PianoSampler();
 
-export function metronomeClick(when: number, accent: boolean): void {
+export type ClickLevel = 'accent' | 'beat' | 'sub';
+
+/** A metronome click: beep (sine), wood (filtered noise) or cowbell; subdivisions are quieter. */
+export function metronomeClick(when: number, level: ClickLevel | boolean, sound: 'beep' | 'wood' | 'cowbell' = 'beep'): void {
+  const lv: ClickLevel = level === true ? 'accent' : level === false ? 'beat' : level;
+  if (sound === 'wood' || sound === 'cowbell') {
+    otherClick(when, lv, sound);
+    return;
+  }
+  const accent = lv === 'accent';
   const ctx = audioCtx();
   logAppSound(-1, audioToPerf(when));
   const osc = ctx.createOscillator();
@@ -212,7 +221,59 @@ export function metronomeClick(when: number, accent: boolean): void {
   gain.gain.setValueAtTime(0, when);
   gain.gain.linearRampToValueAtTime(accent ? 0.6 : 0.4, when + 0.002);
   gain.gain.exponentialRampToValueAtTime(0.001, when + 0.06);
+  if (lv === 'sub') gain.gain.value = 0;
   osc.connect(gain).connect(bus('metronome'));
   osc.start(when);
   osc.stop(when + 0.08);
+  if (lv === 'sub') {
+    // quieter, higher tick for subdivisions
+    gain.gain.cancelScheduledValues(when);
+    gain.gain.setValueAtTime(0, when);
+    gain.gain.linearRampToValueAtTime(0.18, when + 0.002);
+    gain.gain.exponentialRampToValueAtTime(0.001, when + 0.04);
+  }
+}
+
+let noise: AudioBuffer | null = null;
+
+function otherClick(when: number, lv: ClickLevel, sound: 'wood' | 'cowbell') {
+  const ctx = audioCtx();
+  logAppSound(-1, audioToPerf(when));
+  const peak = lv === 'accent' ? 0.7 : lv === 'beat' ? 0.45 : 0.18;
+  const gain = ctx.createGain();
+  gain.connect(bus('metronome'));
+  if (sound === 'wood') {
+    if (!noise) {
+      noise = ctx.createBuffer(1, Math.round(ctx.sampleRate * 0.05), ctx.sampleRate);
+      const d = noise.getChannelData(0);
+      for (let i = 0; i < d.length; i++) d[i] = (Math.random() * 2 - 1) * Math.exp(-i / (d.length / 6));
+    }
+    const src = ctx.createBufferSource();
+    src.buffer = noise;
+    const bp = ctx.createBiquadFilter();
+    bp.type = 'bandpass';
+    bp.frequency.value = lv === 'accent' ? 2400 : 1800;
+    bp.Q.value = 6;
+    gain.gain.value = peak * 3;
+    src.connect(bp).connect(gain);
+    src.start(when);
+    return;
+  }
+  // Cowbell: two detuned square waves through a band-pass, quick decay.
+  const bp = ctx.createBiquadFilter();
+  bp.type = 'bandpass';
+  bp.frequency.value = 800;
+  bp.Q.value = 2;
+  bp.connect(gain);
+  for (const f of [587, 845]) {
+    const o = ctx.createOscillator();
+    o.type = 'square';
+    o.frequency.value = lv === 'accent' ? f * 1.12 : f;
+    o.connect(bp);
+    o.start(when);
+    o.stop(when + 0.25);
+  }
+  gain.gain.setValueAtTime(0, when);
+  gain.gain.linearRampToValueAtTime(peak * 0.5, when + 0.003);
+  gain.gain.exponentialRampToValueAtTime(0.001, when + (lv === 'sub' ? 0.08 : 0.22));
 }

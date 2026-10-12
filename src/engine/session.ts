@@ -18,6 +18,7 @@ import {
 } from './controllers';
 import { ClickScheduler, NoteScheduler, buildClicks } from './scheduler';
 import { NoteMark, type PassSummary, type RecordedEvent, type Report, type SessionOptions } from './types';
+import { TUNING_PRESETS, type Tuning } from '../store/settings';
 
 export interface Hud {
   accuracy: number | null;
@@ -34,8 +35,6 @@ export interface Hud {
   status: Session['status'];
 }
 
-const AUTO_SPEED_STEP = 0.05;
-const CLEAN_PASS = 0.9;
 
 export class Session implements SessionContext {
   readonly clock = new Clock();
@@ -45,6 +44,7 @@ export class Session implements SessionContext {
   readonly allNotes: Note[];
   readonly marks: Uint8Array;
   readonly leadIn: number;
+  readonly tuning: Tuning;
   targetBps: number;
   rate: number;
   metronome: boolean;
@@ -58,6 +58,8 @@ export class Session implements SessionContext {
   private passStart: number;
   private controller: Controller;
   private appSched: NoteScheduler;
+  private guideSched: NoteScheduler | null;
+  private countInClicks = true;
   private clickSched: ClickScheduler;
   private unsubs: Array<() => void> = [];
   private listeners = new Set<() => void>();
@@ -87,17 +89,21 @@ export class Session implements SessionContext {
         : opts.otherHand === 'app'
           ? this.allNotes.filter((n) => !this.hands.includes(n.hand))
           : [];
+    this.tuning = opts.tuning ?? TUNING_PRESETS.normal;
     this.marks = new Uint8Array(song.notes.length);
     for (const n of appNotes) this.marks[n.id] = NoteMark.Auto;
 
     const bar = measureLength(song.timeSig);
     const timed = opts.mode === 'listen' || (!opts.wait && opts.mode !== 'audition');
     // Timed modes get a full count-in bar; waiting modes just need the first notes to fall into view.
-    this.leadIn = timed ? bar : Math.min(bar, 1.5 * this.targetBps);
+    const countIn = opts.countInBars ?? 1;
+    this.leadIn = timed && countIn > 0 ? bar * countIn : Math.min(bar, 1.5 * this.targetBps);
+    this.countInClicks = timed && countIn > 0;
 
     this.controller = this.makeController();
     this.appSched = new NoteScheduler(appNotes);
-    this.clickSched = new ClickScheduler(buildClicks(song, this.region.startBeat, this.leadIn));
+    this.clickSched = new ClickScheduler(buildClicks(song, this.region.startBeat, this.leadIn, opts.clicks), opts.clicks?.sound);
+    this.guideSched = opts.guide && opts.mode !== 'listen' ? new NoteScheduler(this.userNotes, 'guide', true) : null;
 
     this.unsubs.push(
       inputHub.onNote((n) => this.onNote(n)),
@@ -147,8 +153,10 @@ export class Session implements SessionContext {
     const m = Math.max(this.region.fromMeasure, Math.min(this.region.toMeasure, index));
     const beat = this.song.measures[m].start;
     piano.stopAll('accomp');
+    piano.stopAll('guide');
     this.controller.seek(beat, now);
     this.appSched.reset(beat);
+    this.guideSched?.reset(beat);
     this.clickSched.reset(this.clock.beatAt(now));
     this.countInUntil = beat;
     this.message = `Bar ${this.song.measures[m].number}`;
@@ -181,6 +189,7 @@ export class Session implements SessionContext {
     this.controller.start(now);
     const from = this.region.startBeat - this.leadIn;
     this.appSched.reset(this.region.startBeat);
+    this.guideSched?.reset(this.region.startBeat);
     this.clickSched.reset(from);
     this.countInUntil = this.region.startBeat;
     this.passStart = now;
@@ -232,7 +241,8 @@ export class Session implements SessionContext {
     this.controller.update(now);
     const clamp = this.controller.clampBeat();
     this.appSched.run(this.clock, now, clamp, this.region.endBeat);
-    const countIn = this.timed ? this.countInUntil : -Infinity;
+    this.guideSched?.run(this.clock, now, clamp, this.region.endBeat);
+    const countIn = this.timed && this.countInClicks ? this.countInUntil : -Infinity;
     this.clickSched.run(this.clock, now, clamp, this.metronome, countIn);
     if (this.controller.isComplete(now)) {
       if (this.opts.loop && this.opts.mode !== 'listen') this.completePass(now);
@@ -245,12 +255,12 @@ export class Session implements SessionContext {
 
   private completePass(now: number) {
     const acc = this.controller.accuracy() ?? 0;
-    const clean = acc >= CLEAN_PASS;
+    const clean = acc >= this.tuning.cleanPass;
     this.passes.push({ accuracy: acc, rate: this.rate, durationSec: (now - this.passStart) / 1000, clean });
     this.lastPass = { steps: this.controller.stepResults(), extras: this.controller.extras(), judgments: this.controller.judgments() };
     let msg = `Pass ${this.passes.length}: ${Math.round(acc * 100)}%`;
-    if (this.opts.autoSpeedUp && clean && this.rate < 1 - 1e-6) {
-      this.setRate(Math.round(Math.min(1, this.rate + AUTO_SPEED_STEP) * 100) / 100);
+    if (this.opts.autoSpeedUp && clean && this.rate < this.tuning.maxRate - 1e-6) {
+      this.setRate(Math.round(Math.min(this.tuning.maxRate, this.rate + this.tuning.speedStep) * 100) / 100);
       msg += ` — tempo up to ${Math.round(this.rate * 100)}%`;
     } else if (!clean) {
       msg += ' — again, slowly and cleanly';
