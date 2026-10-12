@@ -340,6 +340,11 @@ export class Session implements SessionContext {
     this.emit();
   }
 
+  /** Loop passes completed so far. */
+  get passList(): readonly PassSummary[] {
+    return this.passes;
+  }
+
   /** Wrong notes so far in this pass. */
   extrasList() {
     return this.controller.extras();

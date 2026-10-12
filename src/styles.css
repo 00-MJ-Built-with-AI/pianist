@@ -1029,6 +1029,68 @@ section {
   }
 }
 
+/* ---------- coach */
+
+.coach-banner {
+  position: absolute;
+  left: 12px;
+  right: 12px;
+  bottom: 12px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  background: rgba(20, 24, 33, 0.94);
+  border: 1px solid var(--accent);
+  border-radius: 12px;
+  padding: 10px 14px;
+  z-index: 3;
+}
+
+.coach-dots {
+  display: flex;
+  gap: 5px;
+}
+
+.coach-dots span {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--bg3);
+  border: 1px solid var(--line);
+}
+
+.coach-dots span.done {
+  background: var(--green);
+  border-color: var(--green);
+}
+
+.coach-dots span.now {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.coach-text {
+  flex: 1;
+  min-width: 200px;
+  display: flex;
+  flex-direction: column;
+}
+
+.coach-dialog {
+  width: min(600px, 100%);
+}
+
+.coach-dialog h2 {
+  margin-bottom: 6px;
+}
+
+.coach-steps {
+  margin: 4px 0 0;
+  padding-left: 22px;
+  line-height: 1.7;
+}
+
 /* ---------- report */
 
 .modal-back {

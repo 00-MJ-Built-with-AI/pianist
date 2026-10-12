@@ -3,7 +3,9 @@ import { resumeAudio } from '../audio/audio';
 import { piano } from '../audio/piano';
 import type { KeyKind } from '../engine/controllers';
 import { Session, type Hud } from '../engine/session';
-import { MODE_LABELS, NoteMark, type ModeKind, type Report } from '../engine/types';
+import { MODE_LABELS, NoteMark, type ModeKind, type Report, type SessionOptions } from '../engine/types';
+import { buildCoachPlan, passCompletesStep, type CoachOptions, type CoachStep } from '../engine/coach';
+import { CoachDialog } from './CoachDialog';
 import { inputHub } from '../input/hub';
 import type { Hand, Song } from '../music/types';
 import { addPracticeTime, saveSession, updateBest } from '../store/db';
@@ -72,6 +74,10 @@ export function Player({ song: baseSong, queue, preset, nextAction, onNavigate, 
   const [loop, setLoop] = useState(preset?.loop ?? { from: firstBar, to: Math.min(song.measures.length - 1, firstBar + 3) });
   const [autoSpeed, setAutoSpeed] = useState(true);
   const [startMeasure, setStartMeasure] = useState(0);
+  const coachRef = useRef<{ steps: CoachStep[]; index: number; from: number; to: number } | null>(null);
+  const [coach, setCoach] = useState<{ steps: CoachStep[]; index: number } | null>(null);
+  const [coachDialog, setCoachDialog] = useState(false);
+  const runStepRef = useRef<(index: number) => void>(() => {});
   const [waitBy, setWaitBy] = useState<Record<WaitMode, boolean>>(() => loadPref('waitBy', { learn: true, practice: true, roll: false }));
   const canWait = mode === 'learn' || mode === 'practice' || mode === 'roll';
   const wait = canWait ? waitBy[mode as WaitMode] : true;
@@ -151,47 +157,109 @@ export function Player({ song: baseSong, queue, preset, nextAction, onNavigate, 
     [onSaved],
   );
 
-  const start = useCallback(async () => {
-    await resumeAudio();
-    if (!piano.loaded) {
-      setPianoState('loading');
-      piano.load().then(() => setPianoState('ready'));
-    }
-    sessionRef.current?.dispose();
-    setReport(null);
-    setHeat(null);
+  const launch = useCallback(
+    async (opts: SessionOptions) => {
+      await resumeAudio();
+      if (!piano.loaded) {
+        setPianoState('loading');
+        piano.load().then(() => setPianoState('ready'));
+      }
+      sessionRef.current?.dispose();
+      setReport(null);
+      setHeat(null);
+      const s = new Session(song, opts, performance.now());
+      let seenPasses = 0;
+      s.subscribe(() => {
+        if (s.message) setToast(s.message);
+        setRate(Math.round(s.rate * 100) / 100);
+        // Coach: a clean pass moves on to the next step.
+        const c = coachRef.current;
+        if (c && s.status === 'running' && s.passList.length > seenPasses) {
+          seenPasses = s.passList.length;
+          if (passCompletesStep(c.steps[c.index], s.passList[seenPasses - 1])) {
+            if (c.index >= c.steps.length - 1) {
+              coachRef.current = null;
+              setCoach(null);
+              s.stop(performance.now());
+              setToast('Passage learned! 🎉 Every step done.');
+            } else {
+              const next = c.index + 1;
+              window.setTimeout(() => runStepRef.current(next), 0);
+            }
+            return;
+          }
+        }
+        if (s.status === 'finished') void finished(s);
+      });
+      sessionRef.current = s;
+      if (import.meta.env.DEV) (window as unknown as { __pianistSession?: Session }).__pianistSession = s;
+      setHud(s.hud(performance.now()));
+      setRunning(true);
+    },
+    [song, finished],
+  );
+
+  const start = useCallback(() => {
     setToast(null);
-    const s = new Session(
-      song,
-      {
-        mode,
-        hands: userHands,
-        otherHand: bothHands ? 'mute' : otherHand,
-        rate,
-        metronome,
-        loop: loopOn ? loop : null,
-        startMeasure: loopOn ? undefined : startMeasure,
-        autoSpeedUp: autoSpeed,
-        wait,
-      },
-      performance.now(),
-    );
-    s.subscribe(() => {
-      if (s.message) setToast(s.message);
-      setRate(Math.round(s.rate * 100) / 100);
-      if (s.status === 'finished') void finished(s);
+    return launch({
+      mode,
+      hands: userHands,
+      otherHand: bothHands ? 'mute' : otherHand,
+      rate,
+      metronome,
+      loop: loopOn ? loop : null,
+      startMeasure: loopOn ? undefined : startMeasure,
+      autoSpeedUp: autoSpeed,
+      wait,
     });
-    sessionRef.current = s;
-    if (import.meta.env.DEV) (window as unknown as { __pianistSession?: Session }).__pianistSession = s;
-    setHud(s.hud(performance.now()));
-    setRunning(true);
-  }, [song, mode, userHands, bothHands, otherHand, rate, metronome, loopOn, loop, autoSpeed, wait, startMeasure, finished]);
+  }, [launch, mode, userHands, bothHands, otherHand, rate, metronome, loopOn, loop, autoSpeed, wait, startMeasure]);
+
+  // Starts one step of the coach: the toolbar shows the step's settings.
+  runStepRef.current = (index: number) => {
+    const c = coachRef.current;
+    if (!c) return;
+    c.index = index;
+    const step = c.steps[index];
+    // The finished step's practice time still counts towards the day.
+    const prev = sessionRef.current;
+    if (prev?.status === 'running') void addPracticeTime(prev.elapsedSec(performance.now())).catch(() => {});
+    setCoach({ steps: c.steps, index });
+    setMode(step.mode);
+    setHands({ R: step.hands.includes('R'), L: step.hands.includes('L') });
+    setRate(step.rate);
+    if (step.mode === 'learn' || step.mode === 'practice') setWaitBy((w) => ({ ...w, [step.mode]: step.wait }));
+    setLoopOn(true);
+    setLoop({ from: c.from, to: c.to });
+    setToast(`Step ${index + 1} of ${c.steps.length}: ${step.title}`);
+    void launch({
+      mode: step.mode,
+      hands: step.hands,
+      otherHand: step.hands.length === 2 ? 'mute' : otherHand,
+      rate: step.rate,
+      metronome,
+      loop: { from: c.from, to: c.to },
+      autoSpeedUp: step.autoSpeedUp,
+      wait: step.wait,
+    });
+  };
+
+  const startCoach = (o: CoachOptions) => {
+    setCoachDialog(false);
+    coachRef.current = { steps: buildCoachPlan(song, o), index: 0, from: o.from, to: o.to };
+    runStepRef.current(0);
+  };
+
+  const endCoach = useCallback(() => {
+    coachRef.current = null;
+    setCoach(null);
+  }, []);
 
   const stop = useCallback(() => {
+    endCoach();
     const s = sessionRef.current;
     if (s && s.status === 'running') s.stop(performance.now());
     setRunning(false);
-  }, []);
+  }, [endCoach]);
 
   // A finished run keeps its colours on screen until a setting changes.
   const resetView = useCallback(() => {
@@ -507,6 +575,11 @@ export function Player({ song: baseSong, queue, preset, nextAction, onNavigate, 
           ♩ Metronome
         </button>
 
+        {!running && mode !== 'listen' && (
+          <button className="btn" onClick={() => setCoachDialog(true)} title="A guided routine for a hard passage">
+            🎓 Coach
+          </button>
+        )}
         <div className="group" title="Repeat a range of bars">
             <button className={`btn toggle ${loopOn ? 'on' : ''}`} disabled={running} onClick={() => setLoopOn(!loopOn)}>
               ⟲ Loop
@@ -625,8 +698,51 @@ export function Player({ song: baseSong, queue, preset, nextAction, onNavigate, 
           )}
         </div>
         {toast && <div className="toast">{toast}</div>}
+        {coach && (
+          <div className="coach-banner">
+            <div className="coach-dots">
+              {coach.steps.map((st, i) => (
+                <span key={st.id} className={i < coach.index ? 'done' : i === coach.index ? 'now' : ''} title={st.title} />
+              ))}
+            </div>
+            <div className="coach-text">
+              <b>
+                🎓 Step {coach.index + 1}/{coach.steps.length}: {coach.steps[coach.index].title}
+              </b>
+              <span className="muted small">{coach.steps[coach.index].hint}</span>
+            </div>
+            <button
+              className="btn"
+              onClick={() => {
+                const c = coachRef.current;
+                if (!c) return;
+                if (c.index >= c.steps.length - 1) stop();
+                else runStepRef.current(c.index + 1);
+              }}
+            >
+              Skip step
+            </button>
+            <button className="btn ghost" onClick={stop}>
+              End coach
+            </button>
+          </div>
+        )}
       </div>
 
+      {coachDialog && (
+        <CoachDialog
+          song={song}
+          initial={
+            loopOn
+              ? loop
+              : heat && report?.weakRange
+                ? report.weakRange
+                : { from: firstBar, to: Math.min(song.measures.length - 1, firstBar + 3) }
+          }
+          onStart={startCoach}
+          onClose={() => setCoachDialog(false)}
+        />
+      )}
       {report && (
         <ReportView
           report={report}
