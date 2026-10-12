@@ -51,7 +51,16 @@ export interface Controller {
   extras(): ExtraNote[];
   judgments(): Judgments | null;
   waiting(now: number): boolean;
+  /** Jump to a beat (the start of a bar); everything from there on is played again. */
+  seek(beat: number, now: number): void;
+  /** Give up on the notes the cursor is waiting for (they count as missed) and move on. */
+  skip?(now: number): void;
 }
+
+const firstAtOrAfter = <T extends { beat?: number; start?: number }>(xs: T[], beat: number) => {
+  const i = xs.findIndex((x) => (x.beat ?? x.start ?? 0) >= beat - 1e-6);
+  return i < 0 ? xs.length : i;
+};
 
 function emptyResult(step: Step): StepResult {
   return {
@@ -148,6 +157,29 @@ export class LearnController implements Controller {
   }
 
   private lastAdvance = 0;
+
+  seek(beat: number, now: number): void {
+    this.idx = firstAtOrAfter(this.steps, beat);
+    this.hits.clear();
+    for (let k = this.idx; k < this.steps.length; k++) {
+      this.results[k] = emptyResult(this.steps[k]);
+      markStep(this.ctx, this.steps[k], null, NoteMark.Pending);
+    }
+    this.lastAdvance = now;
+    this.ctx.clock.start(beat - Math.min(this.ctx.leadIn, 1), now);
+  }
+
+  skip(now: number): void {
+    const step = this.steps[this.idx];
+    if (!step) return;
+    const res = this.results[this.idx];
+    res.missed = step.pitches.filter((p) => !this.hits.has(p));
+    for (const p of res.missed) markStep(this.ctx, step, p, NoteMark.Missed);
+    this.hits.clear();
+    this.idx++;
+    this.lastAdvance = now;
+    this.ctx.clock.anchor(step.beat, now);
+  }
 
   update(): void {}
 
@@ -315,6 +347,29 @@ export class FollowController implements Controller {
     this.ctx.clock.anchor(this.steps[j].beat, t);
   }
 
+  seek(beat: number, now: number): void {
+    this.pos = firstAtOrAfter(this.steps, beat);
+    for (let k = this.pos; k < this.steps.length; k++) {
+      this.matched[k] = new Map();
+      this.firstTime[k] = NaN;
+      this.results[k] = emptyResult(this.steps[k]);
+      markStep(this.ctx, this.steps[k], null, NoteMark.Pending);
+    }
+    this.anchorIdx = -1;
+    this.bps = this.ctx.targetBps;
+    this.ctx.clock.bps = this.bps;
+    this.ctx.clock.start(beat - Math.min(this.ctx.leadIn, 1), now);
+  }
+
+  skip(now: number): void {
+    if (this.pos >= this.steps.length) return;
+    this.missRemaining(this.pos);
+    const step = this.steps[this.pos];
+    this.pos++;
+    this.anchorIdx = -1;
+    this.ctx.clock.anchor(step.beat, now);
+  }
+
   update(now: number): void {
     // The final chord resolves once the player has clearly stopped.
     const last = this.steps.length - 1;
@@ -473,6 +528,22 @@ export class RollController implements Controller {
     return this.ctx.clock.beatAt(now) >= this.ctx.region.endBeat;
   }
 
+  seek(beat: number, now: number): void {
+    for (const n of this.notes) {
+      if (n.start < beat - 1e-6) continue;
+      this.matched.delete(n.id);
+      this.ctx.marks[n.id] = NoteMark.Pending;
+    }
+    this.steps.forEach((s, i) => {
+      if (s.beat >= beat - 1e-6) this.results[i] = emptyResult(s);
+    });
+    this.missPtr = firstAtOrAfter(this.notes, beat);
+    this.j.combo = 0;
+    // A full count-in bar before the music continues.
+    this.ctx.clock.bps = this.ctx.targetBps;
+    this.ctx.clock.start(beat - this.ctx.leadIn, now);
+  }
+
   accuracy(): number | null {
     const judged = this.j.perfect + this.j.good + this.j.miss;
     if (!judged) return null;
@@ -526,6 +597,11 @@ export class ListenController implements Controller {
 
   onNote(): KeyKind {
     return 'neutral';
+  }
+
+  seek(beat: number, now: number): void {
+    for (const n of this.ctx.allNotes) if (n.start >= beat - 1e-6) this.ctx.marks[n.id] = NoteMark.Pending;
+    this.ctx.clock.start(beat, now);
   }
 
   update(now: number): void {

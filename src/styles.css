@@ -817,6 +817,16 @@ section {
   font-weight: 650;
 }
 
+.bar-value {
+  min-width: 34px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.transport .seg {
+  padding: 6px 10px;
+}
+
 .transpose-value {
   min-width: 44px;
   text-align: center;
@@ -1435,6 +1445,50 @@ section {
 
 .about p {
   line-height: 1.6;
+}
+
+/* ---------- display options */
+
+.display-menu {
+  width: 300px;
+  right: 0;
+}
+
+.display-form {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 2px 6px 6px;
+}
+
+.display-form .opt {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 5px 2px;
+}
+
+.display-form .opt.check {
+  justify-content: flex-start;
+  cursor: pointer;
+}
+
+.display-form select {
+  background: var(--bg3);
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  padding: 4px 6px;
+  max-width: 170px;
+}
+
+.display-form input[type='checkbox'] {
+  accent-color: var(--accent);
+}
+
+.settings .display-form {
+  padding: 4px 0 0;
+  max-width: 520px;
 }
 
 /* ---------- editor */

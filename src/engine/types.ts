@@ -18,6 +18,8 @@ export interface SessionOptions {
   rate: number; // tempo factor, 0.25 … 1.5
   metronome: boolean;
   loop: { from: number; to: number } | null; // bar indexes, inclusive
+  /** Without a loop: start from this bar instead of the beginning. */
+  startMeasure?: number;
   autoSpeedUp: boolean;
   /** Wait for the right notes (Learn, Piano Roll) or for the player's pace (Practice); off keeps going at tempo. */
   wait: boolean;

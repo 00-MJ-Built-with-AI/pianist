@@ -1,7 +1,7 @@
 import { piano } from '../audio/piano';
 import { inputHub, type InputSource, type PlayedNote } from '../input/hub';
 import { micLag } from '../input/mic/mic';
-import { measureLength } from '../music/song';
+import { measureIndexAt, measureLength } from '../music/song';
 import { regionFor, wholeSong, type Region } from '../music/steps';
 import type { Hand, Note, Song } from '../music/types';
 import { analyze } from './analysis';
@@ -69,7 +69,11 @@ export class Session implements SessionContext {
     readonly opts: SessionOptions,
     now: number,
   ) {
-    this.region = opts.loop ? regionFor(song, opts.loop.from, opts.loop.to) : wholeSong(song);
+    this.region = opts.loop
+      ? regionFor(song, opts.loop.from, opts.loop.to)
+      : opts.startMeasure
+        ? regionFor(song, opts.startMeasure, song.measures.length - 1)
+        : wholeSong(song);
     this.hands = opts.mode === 'listen' ? ['R', 'L'] : opts.hands;
     this.rate = opts.rate;
     this.metronome = opts.metronome;
@@ -129,6 +133,47 @@ export class Session implements SessionContext {
     return this.controller instanceof RollController;
   }
 
+  /** Clicks before this beat are a count-in and sound even with the metronome off. */
+  private countInUntil = 0;
+
+  /** Bar the cursor is in. */
+  currentMeasure(now: number): number {
+    return measureIndexAt(this.song.measures, Math.max(this.region.startBeat, this.playhead(now)));
+  }
+
+  /** Jumps to a bar inside the practised region. */
+  seekMeasure(index: number, now: number): void {
+    if (this.status !== 'running') return;
+    const m = Math.max(this.region.fromMeasure, Math.min(this.region.toMeasure, index));
+    const beat = this.song.measures[m].start;
+    piano.stopAll('accomp');
+    this.controller.seek(beat, now);
+    this.appSched.reset(beat);
+    this.clickSched.reset(this.clock.beatAt(now));
+    this.countInUntil = beat;
+    this.message = `Bar ${this.song.measures[m].number}`;
+    this.emit();
+  }
+
+  /** Back to the start of this bar, or to the previous bar when already at its start. */
+  previousBar(now: number): void {
+    const cur = this.currentMeasure(now);
+    const into = this.playhead(now) - this.song.measures[cur].start;
+    this.seekMeasure(into > 0.75 ? cur : cur - 1, now);
+  }
+
+  nextBar(now: number): void {
+    this.seekMeasure(this.currentMeasure(now) + 1, now);
+  }
+
+  get canSkip(): boolean {
+    return !!this.controller.skip && !this.timed && this.opts.mode !== 'audition';
+  }
+
+  skip(now: number): void {
+    if (this.status === 'running') this.controller.skip?.(now);
+  }
+
   private restart(now: number) {
     piano.stopAll('accomp');
     for (const n of this.userNotes) this.marks[n.id] = NoteMark.Pending;
@@ -137,6 +182,7 @@ export class Session implements SessionContext {
     const from = this.region.startBeat - this.leadIn;
     this.appSched.reset(this.region.startBeat);
     this.clickSched.reset(from);
+    this.countInUntil = this.region.startBeat;
     this.passStart = now;
   }
 
@@ -186,7 +232,7 @@ export class Session implements SessionContext {
     this.controller.update(now);
     const clamp = this.controller.clampBeat();
     this.appSched.run(this.clock, now, clamp, this.region.endBeat);
-    const countIn = this.timed ? this.region.startBeat : -Infinity;
+    const countIn = this.timed ? this.countInUntil : -Infinity;
     this.clickSched.run(this.clock, now, clamp, this.metronome, countIn);
     if (this.controller.isComplete(now)) {
       if (this.opts.loop && this.opts.mode !== 'listen') this.completePass(now);

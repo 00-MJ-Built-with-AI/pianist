@@ -3,6 +3,7 @@ import { piano } from '../audio/piano';
 import { useState } from 'react';
 import type { SelfTestResult } from '../input/mic/selftest';
 import { Calibrate } from './Calibrate';
+import { DisplayOptionsForm } from './DisplayMenu';
 import { updateSettings, useSettings } from '../store/settings';
 
 function Slider(props: { label: string; hint?: string; value: number; min: number; max: number; step: number; unit?: string; onChange: (v: number) => void }) {
@@ -134,23 +135,7 @@ export function SettingsPage() {
 
       <section>
         <h2>Display</h2>
-        <label className="setting">
-          <div>
-            <b>Note names on the keyboard</b>
-          </div>
-          <select value={s.noteNames} onChange={(e) => updateSettings({ noteNames: e.target.value as typeof s.noteNames })}>
-            <option value="c-only">Only C keys</option>
-            <option value="all">All white keys</option>
-            <option value="none">None</option>
-          </select>
-        </label>
-        <label className="setting">
-          <div>
-            <b>Always show all 88 keys</b>
-            <div className="muted small">Otherwise the keyboard zooms to the range of the piece.</div>
-          </div>
-          <input type="checkbox" checked={s.fullKeyboard} onChange={(e) => updateSettings({ fullKeyboard: e.target.checked })} />
-        </label>
+        <DisplayOptionsForm />
       </section>
 
       {calibrating && <Calibrate onClose={() => setCalibrating(false)} />}

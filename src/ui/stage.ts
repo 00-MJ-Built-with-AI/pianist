@@ -1,6 +1,6 @@
 import type { Flash, KeyKind } from '../engine/controllers';
 import { NoteMark } from '../engine/types';
-import { isBlackKey, pitchName } from '../music/pitch';
+import { isBlackKey, noteLabel, type NameStyle } from '../music/pitch';
 import type { Hand, Song } from '../music/types';
 
 export interface StageFrame {
@@ -16,8 +16,32 @@ export interface StageFrame {
   waiting: boolean;
   loop: { start: number; end: number } | null;
   hideCues: boolean;
-  noteNames: 'c-only' | 'all' | 'none';
+  display: StageDisplay;
+  preferFlats: boolean;
 }
+
+/** How the keyboard and falling notes are labelled and sized. */
+export interface StageDisplay {
+  keyLabels: 'none' | 'c' | 'white' | 'all';
+  nameStyle: NameStyle;
+  noteLabels: boolean;
+  showTargets: boolean;
+  keyboardSize: 'small' | 'medium' | 'large';
+}
+
+export const DEFAULT_DISPLAY: StageDisplay = {
+  keyLabels: 'c',
+  nameStyle: 'octave',
+  noteLabels: true,
+  showTargets: true,
+  keyboardSize: 'medium',
+};
+
+const KEYBOARD_SIZES = {
+  small: { k: 0.17, min: 55, max: 100 },
+  medium: { k: 0.24, min: 70, max: 140 },
+  large: { k: 0.33, min: 90, max: 210 },
+};
 
 const COLORS = {
   bg: '#0d0f14',
@@ -66,6 +90,7 @@ export class Stage {
   private keyX = new Float32Array(128);
   private keyW = new Float32Array(128);
   private song: Song | null = null;
+  private kbSize: StageDisplay['keyboardSize'] = 'medium';
 
   constructor(private canvas: HTMLCanvasElement) {
     this.ctx = canvas.getContext('2d')!;
@@ -151,12 +176,14 @@ export class Stage {
   }
 
   private keyboardHeight(): number {
-    return Math.max(70, Math.min(140, this.h * 0.24));
+    const s = KEYBOARD_SIZES[this.kbSize];
+    return Math.max(s.min, Math.min(s.max, this.h * s.k));
   }
 
   draw(f: StageFrame): void {
     const { ctx } = this;
     ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
+    this.kbSize = f.display.keyboardSize;
     const kbH = this.keyboardHeight();
     const fallH = this.h - kbH;
     ctx.fillStyle = COLORS.bg;
@@ -258,9 +285,12 @@ export class Stage {
         ctx.stroke();
       }
       ctx.globalAlpha = 1;
-      if (h >= 18 && w >= 14 && user) {
+      if (f.display.noteLabels && h >= 18 && w >= 14 && user) {
+        const style = f.display.nameStyle === 'octave' && w < 24 ? 'letter' : f.display.nameStyle;
+        const label = noteLabel(n.pitch, style, f.preferFlats);
+        ctx.font = `600 ${label.length > 3 && w < 26 ? 8 : 10}px system-ui, sans-serif`;
         ctx.fillStyle = 'rgba(8,10,14,0.75)';
-        ctx.fillText(pitchName(n.pitch, song.keyFifths < 0).replace(/-?\d+$/, ''), x + w / 2, yTop + 1 + h - 3);
+        ctx.fillText(label, x + w / 2, yTop + 1 + h - 3);
       }
     }
     ctx.restore();
@@ -285,7 +315,7 @@ export class Stage {
 
   private drawKeyboard(f: StageFrame, y0: number, kbH: number) {
     const { ctx } = this;
-    const targets = new Set(f.targets);
+    const targets = new Set(f.display.showTargets ? f.targets : []);
     const pulse = 0.5 + 0.5 * Math.sin(f.now / 160);
     ctx.font = '10px system-ui, sans-serif';
     ctx.textAlign = 'center';
@@ -316,10 +346,14 @@ export class Stage {
         ctx.fillRect(x + 3, y0 + kbH - 26, w - 6, 16);
         ctx.globalAlpha = 1;
       }
-      const showName = f.noteNames === 'all' || (f.noteNames === 'c-only' && p % 12 === 0);
-      if (showName && w > 12) {
-        ctx.fillStyle = '#7a7466';
-        ctx.fillText(f.noteNames === 'all' && p % 12 !== 0 ? pitchName(p)[0] : pitchName(p), x + w / 2, y0 + kbH - 30);
+      const labels = f.display.keyLabels;
+      const showName = labels === 'white' || labels === 'all' || (labels === 'c' && p % 12 === 0);
+      if (showName && w > 10) {
+        const label = noteLabel(p, f.display.nameStyle, f.preferFlats);
+        const size = Math.min(11, Math.max(7, w * 0.5));
+        ctx.font = `${f.held.has(p) ? '700 ' : ''}${size}px system-ui, sans-serif`;
+        ctx.fillStyle = f.held.has(p) ? '#0d0f14' : '#7a7466';
+        ctx.fillText(label, x + w / 2, y0 + kbH - 30, w - 2);
       }
     }
     // Black keys
@@ -337,6 +371,16 @@ export class Stage {
         ctx.globalAlpha = f.waiting ? 0.55 + 0.45 * pulse : 0.95;
         ctx.fillRect(x + 2, y0 + bh - 16, w - 4, 12);
         ctx.globalAlpha = 1;
+      }
+      if (f.display.keyLabels === 'all') {
+        // Black keys are narrow: the accidental goes above the letter.
+        const label = noteLabel(p, f.display.nameStyle === 'octave' ? 'letter' : f.display.nameStyle, f.preferFlats);
+        const size = Math.min(10, Math.max(7, w * 0.62));
+        ctx.font = `${size}px system-ui, sans-serif`;
+        ctx.fillStyle = f.held.has(p) ? '#0d0f14' : '#b9b3a6';
+        const [letter, acc] = [label.replace(/[♯♭]/g, ''), label.match(/[♯♭]/)?.[0] ?? ''];
+        ctx.fillText(acc, x + w / 2, y0 + bh - 20 - size, w);
+        ctx.fillText(letter, x + w / 2, y0 + bh - 20, w);
       }
     }
     // Waiting: glow over the keys to press

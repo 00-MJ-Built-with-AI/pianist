@@ -38,6 +38,12 @@ describe('library', () => {
     }
   });
 
+  it('keeps the written spelling of accidentals', () => {
+    const fe = songs.find((s) => s.id === 'fur-elise')!;
+    expect(fe.scoreXml).toContain('<step>D</step><alter>1</alter>');
+    expect(fe.scoreXml).not.toContain('<step>E</step><alter>-1</alter>');
+  });
+
   it('handles the Für Elise pickup', () => {
     const fe = songs.find((s) => s.id === 'fur-elise')!;
     expect(fe.measures[0]).toMatchObject({ number: 0, length: 0.5 });

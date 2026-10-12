@@ -160,3 +160,48 @@ describe('Piano Roll mode', () => {
     expect(ctx.marks[notes[2].id]).toBe(NoteMark.Early);
   });
 });
+
+describe('moving around while playing', () => {
+  it('skips a step in Learn and marks it missed', () => {
+    const s = song('ode-to-joy');
+    const ctx = context(s, ['R']);
+    const c = new LearnController(ctx);
+    c.start(0);
+    c.skip(500);
+    expect(c.stepResults()[0].missed).toEqual([64]);
+    expect(ctx.marks[ctx.userNotes[0].id]).toBe(NoteMark.Missed);
+    expect(c.targets()).toEqual([64]); // the second E
+    expect(c.onNote(press(64, 600))).toBe('good');
+  });
+
+  it('jumps to a bar in Learn and plays it again', () => {
+    const s = song('ode-to-joy');
+    const ctx = context(s, ['R']);
+    const c = new LearnController(ctx);
+    c.start(0);
+    c.seek(s.measures[2].start, 1000);
+    expect(c.clampBeat()).toBe(8);
+    expect(c.targets()).toEqual([60]); // bar 3 starts on C
+    c.seek(0, 2000);
+    expect(c.clampBeat()).toBe(0);
+  });
+
+  it('jumps in Practice and Piano Roll', () => {
+    const s = song('mary-lamb');
+    const ctx = context(s, ['R']);
+    const f = new FollowController(ctx, false);
+    f.start(0);
+    f.onNote(press(64, 1000));
+    f.seek(s.measures[1].start, 2000);
+    expect(f.targets()).toEqual([64]);
+    f.seek(0, 3000);
+    expect(f.stepResults()[0].played).toEqual([]);
+
+    const ctx2 = context(s, ['R']);
+    const r = new RollController(ctx2);
+    r.start(0);
+    r.seek(4, 5000);
+    const n = ctx2.userNotes.find((x) => x.start === 4)!;
+    expect(r.onNote(press(n.pitch, ctx2.clock.timeAt(4)))).toBe('good');
+  });
+});

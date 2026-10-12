@@ -64,3 +64,18 @@ export function spell(pitch: number, keyFifths: number, hint?: 'sharp' | 'flat')
   const octave = Math.floor((pitch - alter) / 12) - 1;
   return { step, alter, octave };
 }
+
+export type NameStyle = 'letter' | 'octave' | 'solfege';
+
+const LETTERS_SHARP = ['C', 'C♯', 'D', 'D♯', 'E', 'F', 'F♯', 'G', 'G♯', 'A', 'A♯', 'B'];
+const LETTERS_FLAT = ['C', 'D♭', 'D', 'E♭', 'E', 'F', 'G♭', 'G', 'A♭', 'A', 'B♭', 'B'];
+const SOLFEGE_SHARP = ['Do', 'Do♯', 'Re', 'Re♯', 'Mi', 'Fa', 'Fa♯', 'Sol', 'Sol♯', 'La', 'La♯', 'Si'];
+const SOLFEGE_FLAT = ['Do', 'Re♭', 'Re', 'Mi♭', 'Mi', 'Fa', 'Sol♭', 'Sol', 'La♭', 'La', 'Si♭', 'Si'];
+
+/** Display name of a key: "C♯", "C♯4" or "Do♯" (fixed do). */
+export function noteLabel(pitch: number, style: NameStyle, preferFlats = false): string {
+  const pc = ((pitch % 12) + 12) % 12;
+  if (style === 'solfege') return (preferFlats ? SOLFEGE_FLAT : SOLFEGE_SHARP)[pc];
+  const name = (preferFlats ? LETTERS_FLAT : LETTERS_SHARP)[pc];
+  return style === 'octave' ? `${name}${Math.floor(pitch / 12) - 1}` : name;
+}

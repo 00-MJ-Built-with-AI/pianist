@@ -10,6 +10,7 @@ export interface EditNote {
   dur: number;
   hand: Hand;
   velocity: number;
+  spell?: 'sharp' | 'flat';
 }
 
 export interface EditDoc {
@@ -30,7 +31,7 @@ export function docFromSong(song: Song): EditDoc {
     timeSig: song.timeSig,
     keyFifths: song.keyFifths,
     pickup: song.pickup,
-    notes: song.notes.map((n, i) => ({ uid: i + 1, pitch: n.pitch, start: n.start, dur: n.dur, hand: n.hand, velocity: n.velocity })),
+    notes: song.notes.map((n, i) => ({ uid: i + 1, pitch: n.pitch, start: n.start, dur: n.dur, hand: n.hand, velocity: n.velocity, spell: n.spell })),
   };
 }
 
@@ -44,7 +45,7 @@ export function songFromDoc(doc: EditDoc, base: Pick<Song, 'id' | 'source' | 'le
     timeSig: doc.timeSig,
     keyFifths: doc.keyFifths,
     pickup: doc.pickup,
-    notes: doc.notes.map(({ pitch, start, dur, hand, velocity }) => ({ pitch, start, dur, hand, velocity })),
+    notes: doc.notes.map(({ pitch, start, dur, hand, velocity, spell }) => ({ pitch, start, dur, hand, velocity, spell })),
     source: base.source,
     createdAt: base.createdAt ?? Date.now(),
   });
@@ -69,7 +70,10 @@ export function moveNotes(notes: EditNote[], uids: ReadonlySet<number>, dBeat: n
   const lo = Math.min(...sel.map((n) => n.pitch));
   const hi = Math.max(...sel.map((n) => n.pitch));
   const dp = Math.max(21 - lo, Math.min(108 - hi, dPitch));
-  return notes.map((n) => (uids.has(n.uid) ? { ...n, start: n.start + db, pitch: clampPitch(n.pitch + dp) } : n));
+  // A note moved to another pitch loses its written spelling.
+  return notes.map((n) =>
+    uids.has(n.uid) ? { ...n, start: n.start + db, pitch: clampPitch(n.pitch + dp), spell: dp ? undefined : n.spell } : n,
+  );
 }
 
 export function resizeNotes(notes: EditNote[], uids: ReadonlySet<number>, dDur: number, minDur: number): EditNote[] {

@@ -8,7 +8,7 @@ import { buildRecordedSong, type RecordedNoteEvent as Ev } from '../music/record
 import { clickUnit, measureLength } from '../music/song';
 import type { Song } from '../music/types';
 import { ScoreView, type ScoreHandle } from './ScoreView';
-import { Stage } from './stage';
+import { DEFAULT_DISPLAY, Stage } from './stage';
 import { useSongPreview } from './usePreview';
 
 interface Props {
@@ -67,7 +67,8 @@ export function Recorder({ onCancel, onSaved }: Props) {
         waiting: false,
         loop: null,
         hideCues: false,
-        noteNames: 'c-only',
+        display: DEFAULT_DISPLAY,
+        preferFlats: false,
       });
       raf = requestAnimationFrame(tick);
     };

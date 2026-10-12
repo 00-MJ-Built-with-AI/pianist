@@ -14,7 +14,8 @@ import type { Queue } from './Library';
 import { ReportView } from './Report';
 import { ScoreView, type ScoreHandle } from './ScoreView';
 import { keyNames, transposeRange, transposeSong } from '../music/transpose';
-import { Stage } from './stage';
+import { Stage, type StageDisplay } from './stage';
+import { DisplayMenu } from './DisplayMenu';
 
 const MODES: ModeKind[] = ['learn', 'practice', 'audition', 'roll', 'listen'];
 
@@ -70,6 +71,7 @@ export function Player({ song: baseSong, queue, preset, nextAction, onNavigate, 
   const [loopOn, setLoopOn] = useState(!!preset?.loop);
   const [loop, setLoop] = useState(preset?.loop ?? { from: firstBar, to: Math.min(song.measures.length - 1, firstBar + 3) });
   const [autoSpeed, setAutoSpeed] = useState(true);
+  const [startMeasure, setStartMeasure] = useState(0);
   const [waitBy, setWaitBy] = useState<Record<WaitMode, boolean>>(() => loadPref('waitBy', { learn: true, practice: true, roll: false }));
   const canWait = mode === 'learn' || mode === 'practice' || mode === 'roll';
   const wait = canWait ? waitBy[mode as WaitMode] : true;
@@ -107,16 +109,18 @@ export function Player({ song: baseSong, queue, preset, nextAction, onNavigate, 
     rate,
     loopBeats,
     idleBeat: -0.5,
-    noteNames: settings.noteNames,
+    display: settings as StageDisplay,
+    preferFlats: false,
   });
   ui.current = {
     userHands: mode === 'listen' ? ['R', 'L'] : userHands,
-    showFalling: mode !== 'audition',
+    showFalling: mode !== 'audition' && settings.showFalling,
     hideCues: mode === 'audition',
     rate,
     loopBeats,
-    idleBeat: (loopBeats?.start ?? 0) - 0.5,
-    noteNames: settings.noteNames,
+    idleBeat: (loopBeats?.start ?? song.measures[Math.min(startMeasure, song.measures.length - 1)].start) - 0.5,
+    display: settings,
+    preferFlats: song.keyFifths < 0,
   };
 
   useEffect(() => savePref('mode', mode), [mode]);
@@ -166,6 +170,7 @@ export function Player({ song: baseSong, queue, preset, nextAction, onNavigate, 
         rate,
         metronome,
         loop: loopOn ? loop : null,
+        startMeasure: loopOn ? undefined : startMeasure,
         autoSpeedUp: autoSpeed,
         wait,
       },
@@ -180,7 +185,7 @@ export function Player({ song: baseSong, queue, preset, nextAction, onNavigate, 
     if (import.meta.env.DEV) (window as unknown as { __pianistSession?: Session }).__pianistSession = s;
     setHud(s.hud(performance.now()));
     setRunning(true);
-  }, [song, mode, userHands, bothHands, otherHand, rate, metronome, loopOn, loop, autoSpeed, wait, finished]);
+  }, [song, mode, userHands, bothHands, otherHand, rate, metronome, loopOn, loop, autoSpeed, wait, startMeasure, finished]);
 
   const stop = useCallback(() => {
     const s = sessionRef.current;
@@ -241,7 +246,8 @@ export function Player({ song: baseSong, queue, preset, nextAction, onNavigate, 
         waiting: s ? s.waiting(now) : false,
         loop: u.loopBeats,
         hideCues: u.hideCues,
-        noteNames: u.noteNames,
+        display: u.display,
+        preferFlats: u.preferFlats,
       });
       scoreRef.current?.setBeat(beat);
       if (s && s.status === 'running' && now - lastHud > 150) {
@@ -264,6 +270,7 @@ export function Player({ song: baseSong, queue, preset, nextAction, onNavigate, 
     const onKey = (e: KeyboardEvent) => {
       const el = e.target as HTMLElement;
       if (el.tagName === 'INPUT' || el.tagName === 'SELECT' || el.tagName === 'TEXTAREA') return;
+      const s = sessionRef.current;
       if (e.code === 'Space') {
         e.preventDefault();
         if (running) stop();
@@ -271,11 +278,23 @@ export function Player({ song: baseSong, queue, preset, nextAction, onNavigate, 
       } else if (e.code === 'Escape') {
         if (running) stop();
         else if (report) setReport(null);
+      } else if (e.code === 'ArrowLeft' || e.code === 'ArrowRight') {
+        e.preventDefault();
+        const forward = e.code === 'ArrowRight';
+        if (running && s) {
+          if (forward) s.nextBar(performance.now());
+          else s.previousBar(performance.now());
+        } else if (!report && !loopOn) {
+          setStartMeasure((m) => Math.max(0, Math.min(song.measures.length - 1, m + (forward ? 1 : -1))));
+        }
+      } else if (e.code === 'Enter' && running && s?.canSkip) {
+        e.preventDefault();
+        s.skip(performance.now());
       }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [running, report, start, stop]);
+  }, [running, report, start, stop, loopOn, song]);
 
   useEffect(() => {
     if (!toast) return;
@@ -285,7 +304,14 @@ export function Player({ song: baseSong, queue, preset, nextAction, onNavigate, 
 
   const onMeasureClick = useCallback(
     (index: number, shift: boolean) => {
-      if (running) return;
+      if (running) {
+        sessionRef.current?.seekMeasure(index, performance.now());
+        return;
+      }
+      if (!loopOn && !shift) {
+        setStartMeasure(index);
+        return;
+      }
       setLoopOn(true);
       setLoop((l) => (shift && loopOn ? { from: Math.min(l.from, index), to: Math.max(l.from, index) } : { from: index, to: index }));
     },
@@ -349,13 +375,13 @@ export function Player({ song: baseSong, queue, preset, nextAction, onNavigate, 
         </div>
         {queue && queueIndex >= 0 && (
           <div className="queue-nav" title={`Collection: ${queue.name}`}>
-            <button className="icon-btn" disabled={!prevSong || running} onClick={() => prevSong && onNavigate?.(prevSong)} aria-label="Previous piece">
+            <button className="icon-btn" disabled={!prevSong} onClick={() => prevSong && onNavigate?.(prevSong)} aria-label="Previous piece">
               ‹
             </button>
             <span className="small">
               <span className="muted">{queue.name}</span> {queueIndex + 1}/{queue.songs.length}
             </span>
-            <button className="icon-btn" disabled={!nextSong || running} onClick={() => nextSong && onNavigate?.(nextSong)} aria-label="Next piece">
+            <button className="icon-btn" disabled={!nextSong} onClick={() => nextSong && onNavigate?.(nextSong)} aria-label="Next piece">
               ›
             </button>
           </div>
@@ -390,6 +416,39 @@ export function Player({ song: baseSong, queue, preset, nextAction, onNavigate, 
         <button className={`btn start ${running ? 'stop' : 'primary'}`} onClick={running ? stop : () => void start()}>
           {running ? '■ Stop' : mode === 'listen' ? '▶ Listen' : '▶ Start'}
         </button>
+        {running ? (
+          <div className="group transport" title="Move while playing (← → keys)">
+            <button className="seg" onClick={() => sessionRef.current?.previousBar(performance.now())} aria-label="Previous bar">
+              ⏮
+            </button>
+            <button className="seg" onClick={() => sessionRef.current?.nextBar(performance.now())} aria-label="Next bar">
+              ⏭
+            </button>
+            {sessionRef.current?.canSkip && (
+              <button className="seg" onClick={() => sessionRef.current?.skip(performance.now())} title="Skip the notes you're stuck on (Enter)">
+                Skip note
+              </button>
+            )}
+          </div>
+        ) : (
+          !loopOn && (
+            <div className="group transport" title="Where to start (← → keys, or click a bar in the score)">
+              <span className="label">From bar</span>
+              <button className="seg" disabled={startMeasure <= 0} onClick={() => setStartMeasure(startMeasure - 1)} aria-label="Start one bar earlier">
+                ◀
+              </button>
+              <span className="value bar-value">{song.measures[Math.min(startMeasure, song.measures.length - 1)].number || 'pickup'}</span>
+              <button
+                className="seg"
+                disabled={startMeasure >= song.measures.length - 1}
+                onClick={() => setStartMeasure(startMeasure + 1)}
+                aria-label="Start one bar later"
+              >
+                ▶
+              </button>
+            </div>
+          )
+        )}
 
         {mode !== 'listen' && (
           <div className="group" title="Which hands you play">
@@ -505,6 +564,7 @@ export function Player({ song: baseSong, queue, preset, nextAction, onNavigate, 
         </div>
 
         <span className="spacer" />
+        <DisplayMenu />
         {song.scoreXml && (
           <button
             className={`btn toggle ${scoreOn[mode] ? 'on' : ''}`}
@@ -541,7 +601,8 @@ export function Player({ song: baseSong, queue, preset, nextAction, onNavigate, 
             <div className="hint">
               <b>{MODE_LABELS[mode]}.</b> {canWait && !wait ? KEEP_GOING_HELP : MODE_HELP[mode]}
               <div className="muted small">
-                Press <kbd>Space</kbd> or Start. {showScore ? 'Click bars in the score to loop them.' : ''}
+                Press <kbd>Space</kbd> or Start. {showScore ? 'Click a bar in the score to start there (or to loop it when Loop is on). ' : ''}
+                <kbd>←</kbd>/<kbd>→</kbd> move by a bar while playing.
                 {pianoState === 'loading' ? ' Loading piano sound…' : ''}
               </div>
             </div>

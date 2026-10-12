@@ -85,7 +85,9 @@ export function parseHand(text: string, hand: Hand, measureLen: number, pickup: 
           if (!tie) tied.delete(pitch);
           continue;
         }
-        const note = { pitch, start: beat, dur, hand, velocity };
+        // Keep the spelling written in the source (D#5 stays D sharp, never E flat).
+        const spellHint = /^[A-Ga-g]#/.test(name) ? ('sharp' as const) : /^[A-Ga-g]b/.test(name) ? ('flat' as const) : undefined;
+        const note = { pitch, start: beat, dur, hand, velocity, spell: spellHint };
         notes.push(note);
         if (tie) tied.set(pitch, note);
       }

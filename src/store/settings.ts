@@ -7,7 +7,14 @@ export interface Settings {
   accompVolume: number;
   metronomeVolume: number;
   echoVolume: number;
-  noteNames: 'c-only' | 'all' | 'none';
+  /** Which piano keys show their name. */
+  keyLabels: 'none' | 'c' | 'white' | 'all';
+  nameStyle: 'letter' | 'octave' | 'solfege';
+  noteLabels: boolean; // names on the falling notes
+  showTargets: boolean; // highlight the keys to play next
+  showFalling: boolean;
+  keyboardSize: 'small' | 'medium' | 'large';
+  fingering: boolean; // suggested finger numbers on the sheet music
   fullKeyboard: boolean;
   micSensitivity: number; // 0–1, higher hears quieter notes
 }
@@ -19,7 +26,13 @@ const DEFAULTS: Settings = {
   accompVolume: 0.7,
   metronomeVolume: 0.6,
   echoVolume: 0.9,
-  noteNames: 'c-only',
+  keyLabels: 'c',
+  nameStyle: 'octave',
+  noteLabels: true,
+  showTargets: true,
+  showFalling: true,
+  keyboardSize: 'medium',
+  fingering: false,
   fullKeyboard: false,
   micSensitivity: 0.5,
 };
@@ -31,7 +44,14 @@ const listeners = new Set<() => void>();
 function load(): Settings {
   try {
     const raw = localStorage.getItem(KEY);
-    return raw ? { ...DEFAULTS, ...JSON.parse(raw) } : { ...DEFAULTS };
+    if (!raw) return { ...DEFAULTS };
+    const saved = JSON.parse(raw) as Partial<Settings> & { noteNames?: string };
+    // v1 had a single "noteNames" option.
+    if (saved.noteNames && !saved.keyLabels) {
+      saved.keyLabels = saved.noteNames === 'all' ? 'white' : saved.noteNames === 'none' ? 'none' : 'c';
+    }
+    delete saved.noteNames;
+    return { ...DEFAULTS, ...saved };
   } catch {
     return { ...DEFAULTS };
   }
