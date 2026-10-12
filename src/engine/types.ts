@@ -59,6 +59,7 @@ export interface ExtraNote {
   pitch: number;
   time: number;
   measure: number;
+  beat: number; // where in the piece it was played
 }
 
 export interface PassSummary {

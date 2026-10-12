@@ -340,6 +340,11 @@ export class Session implements SessionContext {
     this.emit();
   }
 
+  /** Wrong notes so far in this pass. */
+  extrasList() {
+    return this.controller.extras();
+  }
+
   /** Practice time in seconds. */
   elapsedSec(now: number): number {
     return (now - this.startedAt) / 1000;

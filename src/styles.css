@@ -898,6 +898,34 @@ section {
   border-radius: 3px;
 }
 
+.score-mark {
+  position: absolute;
+  pointer-events: auto;
+  transform: translate(-50%, -50%);
+}
+
+.score-mark.missed,
+.score-mark.off {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  border: 2.5px solid var(--red);
+  box-shadow: 0 0 8px rgba(255, 93, 108, 0.6);
+}
+
+.score-mark.off {
+  border-color: var(--amber);
+  box-shadow: 0 0 8px rgba(255, 184, 77, 0.5);
+}
+
+.score-mark.wrong {
+  transform: translate(-50%, 0);
+  color: var(--red);
+  font-weight: 800;
+  font-size: 13px;
+  text-shadow: 0 0 6px rgba(255, 93, 108, 0.6);
+}
+
 .score-playhead {
   position: absolute;
   top: 0;

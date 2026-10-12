@@ -138,7 +138,7 @@ export class LearnController implements Controller {
     }
     this.wrong++;
     this.results[this.idx].wrongBefore++;
-    this.extraNotes.push({ pitch: n.pitch, time: n.time, measure: step.measure });
+    this.extraNotes.push({ pitch: n.pitch, time: n.time, measure: step.measure, beat: step.beat });
     this.ctx.flash({ pitch: n.pitch, kind: 'wrong', time: n.time });
     return 'wrong';
   }
@@ -296,8 +296,8 @@ export class FollowController implements Controller {
         return 'good';
       }
     }
-    const measure = this.steps[Math.min(this.pos, this.steps.length - 1)]?.measure ?? 0;
-    this.extraNotes.push({ pitch: p, time: n.time, measure });
+    const near = this.steps[Math.min(this.pos, this.steps.length - 1)];
+    this.extraNotes.push({ pitch: p, time: n.time, measure: near?.measure ?? 0, beat: near?.beat ?? predicted });
     if (this.pos < this.steps.length) this.results[this.pos].wrongBefore++;
     if (!this.hideCues) this.ctx.flash({ pitch: p, kind: 'wrong', time: n.time });
     return this.hideCues ? 'neutral' : 'wrong';
@@ -486,7 +486,7 @@ export class RollController implements Controller {
       this.j.combo = 0;
       const beat = clock.beatAt(n.time);
       const measure = this.notes.find((x) => x.start + x.dur > beat)?.measure ?? 0;
-      this.extraNotes.push({ pitch: n.pitch, time: n.time, measure });
+      this.extraNotes.push({ pitch: n.pitch, time: n.time, measure, beat });
       this.ctx.flash({ pitch: n.pitch, kind: 'wrong', time: n.time });
       return 'wrong';
     }

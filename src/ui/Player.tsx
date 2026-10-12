@@ -3,7 +3,7 @@ import { resumeAudio } from '../audio/audio';
 import { piano } from '../audio/piano';
 import type { KeyKind } from '../engine/controllers';
 import { Session, type Hud } from '../engine/session';
-import { MODE_LABELS, type ModeKind, type Report } from '../engine/types';
+import { MODE_LABELS, NoteMark, type ModeKind, type Report } from '../engine/types';
 import { inputHub } from '../input/hub';
 import type { Hand, Song } from '../music/types';
 import { addPracticeTime, saveSession, updateBest } from '../store/db';
@@ -12,7 +12,7 @@ import { ExportMenu } from './ExportMenu';
 import { InputBar } from './InputBar';
 import type { Queue } from './Library';
 import { ReportView } from './Report';
-import { ScoreView, type ScoreHandle } from './ScoreView';
+import { ScoreView, type ScoreHandle, type ScoreMark } from './ScoreView';
 import { keyNames, transposeRange, transposeSong } from '../music/transpose';
 import { Stage, type StageDisplay } from './stage';
 import { DisplayMenu } from './DisplayMenu';
@@ -225,6 +225,7 @@ export function Player({ song: baseSong, queue, preset, nextAction, onNavigate, 
     ro.observe(canvas);
     let raf = 0;
     let lastHud = 0;
+    let lastMarks = 0;
     const tick = () => {
       const now = performance.now();
       const s = sessionRef.current;
@@ -250,6 +251,20 @@ export function Player({ song: baseSong, queue, preset, nextAction, onNavigate, 
         preferFlats: u.preferFlats,
       });
       scoreRef.current?.setBeat(beat);
+      // Mistakes on the sheet music (hidden while performing in Audition).
+      if (now - lastMarks > 250) {
+        lastMarks = now;
+        const marks: ScoreMark[] = [];
+        if (s && !(u.hideCues && s.status === 'running')) {
+          for (const n of song.notes) {
+            const m = s.marks[n.id];
+            if (m === NoteMark.Missed) marks.push({ beat: n.start, pitch: n.pitch, kind: 'missed' });
+            else if (m === NoteMark.Early || m === NoteMark.Late) marks.push({ beat: n.start, pitch: n.pitch, kind: 'off' });
+          }
+          for (const e of s.extrasList()) marks.push({ beat: e.beat, pitch: e.pitch, kind: 'wrong' });
+        }
+        scoreRef.current?.setMarks(marks);
+      }
       if (s && s.status === 'running' && now - lastHud > 150) {
         lastHud = now;
         setHud(s.hud(now));
@@ -584,6 +599,7 @@ export function Player({ song: baseSong, queue, preset, nextAction, onNavigate, 
           loop={scoreLoop}
           onMeasureClick={onMeasureClick}
           showPlayhead={mode !== 'audition' || !running}
+          fingering={settings.fingering}
         />
       )}
 

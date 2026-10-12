@@ -1,9 +1,20 @@
 import { OpenSheetMusicDisplay } from 'opensheetmusicdisplay';
-import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react';
+import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
+import { suggestFingering } from '../music/fingering';
+import { songToMusicXml } from '../music/musicxml';
+import { pitchName } from '../music/pitch';
 import type { Song } from '../music/types';
+
+/** A mistake to show on the sheet music. */
+export interface ScoreMark {
+  beat: number;
+  pitch: number;
+  kind: 'missed' | 'off' | 'wrong'; // off = early or late
+}
 
 export interface ScoreHandle {
   setBeat(beat: number): void;
+  setMarks(marks: ScoreMark[]): void;
 }
 
 interface Props {
@@ -12,7 +23,11 @@ interface Props {
   loop: { from: number; to: number } | null;
   onMeasureClick?: (index: number, shift: boolean) => void;
   showPlayhead: boolean;
+  /** Show finger numbers: suggested ones for generated scores, the file's own for imported MusicXML. */
+  fingering?: boolean;
 }
+
+const noteKey = (beat: number, pitch: number) => `${Math.round(beat * 48)}|${pitch}`;
 
 interface Box {
   x: number;
@@ -31,9 +46,17 @@ function heatColor(score: number): string {
 
 /** One long line of real notation that scrolls under a fixed playhead. */
 export const ScoreView = forwardRef<ScoreHandle, Props>(function ScoreView(
-  { song, heat, loop, onMeasureClick, showPlayhead },
+  { song, heat, loop, onMeasureClick, showPlayhead, fingering = false },
   ref,
 ) {
+  // Imported MusicXML keeps its engraving (and its own fingering); generated scores get suggestions.
+  const xml = useMemo(
+    () => (fingering && song.source !== 'musicxml' ? songToMusicXml(song, { fingering: suggestFingering(song) }) : song.scoreXml),
+    [song, fingering],
+  );
+  const notePos = useRef(new Map<string, { x: number; y: number }>());
+  const [marks, setMarksState] = useState<ScoreMark[]>([]);
+  const marksSig = useRef('');
   const hostRef = useRef<HTMLDivElement>(null);
   const innerRef = useRef<HTMLDivElement>(null);
   const sheetRef = useRef<HTMLDivElement>(null);
@@ -46,7 +69,7 @@ export const ScoreView = forwardRef<ScoreHandle, Props>(function ScoreView(
 
   useEffect(() => {
     const el = sheetRef.current;
-    if (!el || !song.scoreXml) return;
+    if (!el || !xml) return;
     let cancelled = false;
     setReady(false);
     setError(null);
@@ -65,14 +88,34 @@ export const ScoreView = forwardRef<ScoreHandle, Props>(function ScoreView(
       autoBeam: true,
       defaultColorMusic: '#e8e4da',
       followCursor: false,
+      drawFingerings: fingering,
     });
     (async () => {
       try {
-        await osmd.load(song.scoreXml!);
+        await osmd.load(xml);
         if (cancelled) return;
         osmd.zoom = ZOOM;
         osmd.render();
         const scale = UNIT_PX * ZOOM;
+
+        // Where every notehead is, so mistakes can be marked on it.
+        const pos = new Map<string, { x: number; y: number }>();
+        for (const staves of osmd.GraphicSheet.MeasureList) {
+          for (const gm of staves) {
+            if (!gm) continue;
+            for (const se of gm.staffEntries) {
+              for (const gve of se.graphicalVoiceEntries) {
+                for (const gn of gve.notes) {
+                  const n = gn.sourceNote;
+                  if (!n || n.isRest() || (n.NoteTie && n.NoteTie.StartNote !== n)) continue;
+                  const at = gn.PositionAndShape.AbsolutePosition;
+                  pos.set(noteKey(n.getAbsoluteTimestamp().RealValue * 4, n.halfTone + 12), { x: at.x * scale, y: at.y * scale });
+                }
+              }
+            }
+          }
+        }
+        notePos.current = pos;
 
         // Measure boxes (index = bar index of the song)
         const list = osmd.GraphicSheet.MeasureList;
@@ -144,7 +187,7 @@ export const ScoreView = forwardRef<ScoreHandle, Props>(function ScoreView(
         // already cleared
       }
     };
-  }, [song.scoreXml, song.totalBeats]);
+  }, [xml, song.totalBeats, fingering]);
 
   useImperativeHandle(
     ref,
@@ -172,9 +215,23 @@ export const ScoreView = forwardRef<ScoreHandle, Props>(function ScoreView(
         lastX.current = x;
         inner.style.transform = `translateX(${Math.round(host.clientWidth * ANCHOR - x)}px)`;
       },
+      setMarks(next: ScoreMark[]) {
+        const sig = next.map((m) => `${m.kind}${m.beat}:${m.pitch}`).join(',');
+        if (sig === marksSig.current) return;
+        marksSig.current = sig;
+        setMarksState(next);
+      },
     }),
     [],
   );
+
+  // x of a beat on the strip (for wrong notes, which have no notehead of their own).
+  const xOfBeat = (beat: number) => {
+    const { beats, xs } = mapRef.current;
+    let i = 0;
+    while (i < beats.length - 1 && beats[i + 1] <= beat) i++;
+    return xs[i] - 6;
+  };
 
   const onClick = (e: React.MouseEvent) => {
     if (!onMeasureClick || !innerRef.current) return;
@@ -218,6 +275,26 @@ export const ScoreView = forwardRef<ScoreHandle, Props>(function ScoreView(
               />
             ),
           )}
+        {ready &&
+          marks.map((m, i) => {
+            if (m.kind === 'wrong') {
+              return (
+                <div key={`w${i}`} className="score-mark wrong" style={{ left: xOfBeat(m.beat), top: band.top - 2 }} title={`Wrong note: ${pitchName(m.pitch)}`}>
+                  ✕
+                </div>
+              );
+            }
+            const p = notePos.current.get(noteKey(m.beat, m.pitch));
+            if (!p) return null;
+            return (
+              <div
+                key={`n${i}`}
+                className={`score-mark ${m.kind}`}
+                style={{ left: p.x, top: p.y + 4 }}
+                title={m.kind === 'missed' ? `Missed ${pitchName(m.pitch)}` : `${pitchName(m.pitch)}: early or late`}
+              />
+            );
+          })}
       </div>
       {showPlayhead && <div className="score-playhead" style={{ left: `${ANCHOR * 100}%` }} />}
     </div>

@@ -67,7 +67,19 @@ function esc(s: string): string {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
-export function songToMusicXml(song: Song): string {
+export interface XmlOptions {
+  /** Finger numbers (1–5) by note id, printed above the right hand and below the left. */
+  fingering?: Map<number, number>;
+}
+
+export function songToMusicXml(song: Song, opts: XmlOptions = {}): string {
+  const fingerAt = new Map<string, number>();
+  if (opts.fingering) {
+    for (const n of song.notes) {
+      const f = opts.fingering.get(n.id);
+      if (f) fingerAt.set(`${n.hand}|${Math.round(n.start * DIVISIONS)}|${n.pitch}`, f);
+    }
+  }
   const bars = song.measures.map((m) => ({
     start: Math.round(m.start * DIVISIONS),
     end: Math.round((m.start + m.length) * DIVISIONS),
@@ -176,10 +188,14 @@ export function songToMusicXml(song: Song): string {
             const alter = sp.alter ? `<alter>${sp.alter}</alter>` : '';
             const ties = (tieStop ? '<tie type="stop"/>' : '') + (tieStart ? '<tie type="start"/>' : '');
             const tied = (tieStop ? '<tied type="stop"/>' : '') + (tieStart ? '<tied type="start"/>' : '');
+            const finger = !p.tieFrom && k === 0 ? fingerAt.get(`${si === 0 ? 'R' : 'L'}|${p.start}|${pitch}`) : undefined;
+            const technical = finger
+              ? `<technical><fingering placement="${si === 0 ? 'above' : 'below'}">${finger}</fingering></technical>`
+              : '';
             out.push(
               `<note>${ci > 0 ? '<chord/>' : ''}<pitch><step>${sp.step}</step>${alter}<octave>${sp.octave}</octave></pitch>` +
                 `<duration>${u}</duration>${ties}<voice>${voice}</voice><type>${type}</type>${'<dot/>'.repeat(dots)}` +
-                `<staff>${staff}</staff>${tied ? `<notations>${tied}</notations>` : ''}</note>`,
+                `<staff>${staff}</staff>${tied || technical ? `<notations>${tied}${technical}</notations>` : ''}</note>`,
             );
           });
         });

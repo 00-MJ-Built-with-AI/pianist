@@ -18,6 +18,7 @@ import { isBlackKey, pitchName } from '../music/pitch';
 import { buildMeasures, measureLength } from '../music/song';
 import { keyNames } from '../music/transpose';
 import type { Hand, Song } from '../music/types';
+import { useSettings } from '../store/settings';
 import { ExportMenu } from './ExportMenu';
 import { ScoreView, type ScoreHandle } from './ScoreView';
 
@@ -49,6 +50,7 @@ type Drag =
   | { kind: 'box'; x0: number; y0: number; x1: number; y1: number; additive: boolean };
 
 export function Editor({ song, onCancel, onSave }: Props) {
+  const settings = useSettings();
   const isBuiltin = song.source === 'builtin';
   const [doc, setDoc] = useState<EditDoc>(() => docFromSong(song));
   const [selected, setSelected] = useState<Set<number>>(new Set());
@@ -589,7 +591,7 @@ export function Editor({ song, onCancel, onSave }: Props) {
         )}
       </div>
 
-      <ScoreView ref={scoreRef} song={preview} heat={null} loop={null} showPlayhead={playing} />
+      <ScoreView ref={scoreRef} song={preview} heat={null} loop={null} showPlayhead={playing} fingering={settings.fingering} />
 
       <div
         className="roll-wrap"
