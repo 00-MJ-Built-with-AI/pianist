@@ -30,6 +30,7 @@ export interface Hud {
   rate: number;
   message: string | null;
   waiting: boolean;
+  timed: boolean;
   status: Session['status'];
 }
 
@@ -86,7 +87,7 @@ export class Session implements SessionContext {
     for (const n of appNotes) this.marks[n.id] = NoteMark.Auto;
 
     const bar = measureLength(song.timeSig);
-    const timed = opts.mode === 'roll' || opts.mode === 'listen';
+    const timed = opts.mode === 'listen' || (!opts.wait && opts.mode !== 'audition');
     // Timed modes get a full count-in bar; waiting modes just need the first notes to fall into view.
     this.leadIn = timed ? bar : Math.min(bar, 1.5 * this.targetBps);
 
@@ -108,18 +109,24 @@ export class Session implements SessionContext {
   }
 
   private makeController(): Controller {
-    switch (this.opts.mode) {
+    const { mode, wait } = this.opts;
+    switch (mode) {
       case 'learn':
-        return new LearnController(this);
+      case 'roll':
+        return wait ? new LearnController(this) : new RollController(this);
       case 'practice':
-        return new FollowController(this, false);
+        // Waiting = the score follows the player's pace; otherwise a fixed tempo that keeps going.
+        return wait ? new FollowController(this, false) : new RollController(this);
       case 'audition':
         return new FollowController(this, true);
-      case 'roll':
-        return this.opts.rollWait ? new LearnController(this) : new RollController(this);
       case 'listen':
         return new ListenController(this);
     }
+  }
+
+  /** True when the music runs at a fixed tempo and keeps going whatever is played. */
+  get timed(): boolean {
+    return this.controller instanceof RollController;
   }
 
   private restart(now: number) {
@@ -179,7 +186,7 @@ export class Session implements SessionContext {
     this.controller.update(now);
     const clamp = this.controller.clampBeat();
     this.appSched.run(this.clock, now, clamp, this.region.endBeat);
-    const countIn = this.opts.mode === 'roll' && !this.opts.rollWait ? this.region.startBeat : -Infinity;
+    const countIn = this.timed ? this.region.startBeat : -Infinity;
     this.clickSched.run(this.clock, now, clamp, this.metronome, countIn);
     if (this.controller.isComplete(now)) {
       if (this.opts.loop && this.opts.mode !== 'listen') this.completePass(now);
@@ -245,6 +252,7 @@ export class Session implements SessionContext {
       rate: this.rate,
       message: this.message,
       waiting: this.waiting(now),
+      timed: this.timed,
       status: this.status,
     };
   }
@@ -267,7 +275,8 @@ export class Session implements SessionContext {
     if (this.opts.mode !== 'listen' && played) {
       this.report = analyze({
         song: this.song,
-        mode: this.opts.mode === 'roll' && this.opts.rollWait ? 'learn' : this.opts.mode,
+        // Analysed by how it was played (waiting, following or timed), reported under the chosen mode.
+        mode: this.controller instanceof LearnController ? 'learn' : this.timed ? 'roll' : this.opts.mode,
         hands: [...this.hands],
         rate: this.rate,
         steps,
@@ -280,7 +289,7 @@ export class Session implements SessionContext {
         source: this.lastSource,
         regionMeasures: [this.region.fromMeasure, this.region.toMeasure],
       });
-      if (this.opts.mode === 'roll' && this.opts.rollWait) this.report.mode = 'roll';
+      this.report.mode = this.opts.mode;
     }
     this.emit();
   }

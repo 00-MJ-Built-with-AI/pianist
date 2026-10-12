@@ -720,6 +720,12 @@ section {
   font-weight: 650;
 }
 
+.transpose-value {
+  min-width: 44px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
 .tempo input[type='range'] {
   width: 140px;
   accent-color: var(--accent);

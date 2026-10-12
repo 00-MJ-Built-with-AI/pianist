@@ -12,9 +12,13 @@ import { InputBar } from './InputBar';
 import type { Queue } from './Library';
 import { ReportView } from './Report';
 import { ScoreView, type ScoreHandle } from './ScoreView';
+import { keyName, transposeRange, transposeSong } from '../music/transpose';
 import { Stage } from './stage';
 
 const MODES: ModeKind[] = ['learn', 'practice', 'audition', 'roll', 'listen'];
+
+const KEEP_GOING_HELP =
+  'The music keeps going at tempo, like a real performance. Play the notes as they reach the line; missed and wrong notes are marked.';
 
 const MODE_HELP: Record<ModeKind, string> = {
   learn: 'The music waits for you. Play the highlighted keys to move on; chord notes can come in any order.',
@@ -24,26 +28,49 @@ const MODE_HELP: Record<ModeKind, string> = {
   listen: 'Hear the piece at the chosen tempo while the score and notes scroll by.',
 };
 
+/** Settings a caller (the daily plan, exercises) can open the player with. */
+export interface PlayerPreset {
+  mode?: ModeKind;
+  hands?: Hand[];
+  rate?: number;
+  loop?: { from: number; to: number } | null;
+  transpose?: number;
+}
+
+type WaitMode = 'learn' | 'practice' | 'roll';
+
 interface Props {
   song: Song;
   queue?: Queue; // the collection being practised, in order
+  preset?: PlayerPreset;
+  /** An extra "next" button, e.g. a new sight-reading exercise. */
+  nextAction?: { label: string; run: () => void };
   onNavigate?: (song: Song) => void;
   onExit: () => void;
   onSaved?: () => void;
 }
 
-export function Player({ song, queue, onNavigate, onExit, onSaved }: Props) {
+export function Player({ song: baseSong, queue, preset, nextAction, onNavigate, onExit, onSaved }: Props) {
   const settings = useSettings();
-  const [mode, setMode] = useState<ModeKind>(() => loadPref<ModeKind>('mode', 'learn'));
-  const [hands, setHands] = useState<Record<Hand, boolean>>(() => loadPref(`hands.${song.id}`, { R: true, L: true }));
+  const id = baseSong.id;
+  const [transpose, setTranspose] = useState<number>(() => preset?.transpose ?? loadPref(`transpose.${id}`, 0));
+  // Everything below works on the (possibly transposed) song.
+  const song = useMemo(() => transposeSong(baseSong, transpose), [baseSong, transpose]);
+  const [tMin, tMax] = useMemo(() => transposeRange(baseSong), [baseSong]);
+  const [mode, setMode] = useState<ModeKind>(() => preset?.mode ?? loadPref<ModeKind>('mode', 'learn'));
+  const [hands, setHands] = useState<Record<Hand, boolean>>(() =>
+    preset?.hands ? { R: preset.hands.includes('R'), L: preset.hands.includes('L') } : loadPref(`hands.${id}`, { R: true, L: true }),
+  );
   const [otherHand, setOtherHand] = useState<'app' | 'mute'>(() => loadPref('otherHand', 'app'));
-  const [rate, setRate] = useState<number>(() => loadPref(`rate.${song.id}`, 1));
+  const [rate, setRate] = useState<number>(() => preset?.rate ?? loadPref(`rate.${id}`, 1));
   const [metronome, setMetronome] = useState(false);
   const firstBar = song.measures[0].number === 0 && song.measures.length > 1 ? 1 : 0;
-  const [loopOn, setLoopOn] = useState(false);
-  const [loop, setLoop] = useState({ from: firstBar, to: Math.min(song.measures.length - 1, firstBar + 3) });
+  const [loopOn, setLoopOn] = useState(!!preset?.loop);
+  const [loop, setLoop] = useState(preset?.loop ?? { from: firstBar, to: Math.min(song.measures.length - 1, firstBar + 3) });
   const [autoSpeed, setAutoSpeed] = useState(true);
-  const [rollWait, setRollWait] = useState(false);
+  const [waitBy, setWaitBy] = useState<Record<WaitMode, boolean>>(() => loadPref('waitBy', { learn: true, practice: true, roll: false }));
+  const canWait = mode === 'learn' || mode === 'practice' || mode === 'roll';
+  const wait = canWait ? waitBy[mode as WaitMode] : true;
   const [scoreOn, setScoreOn] = useState<Record<ModeKind, boolean>>(() =>
     loadPref('scoreOn', { learn: true, practice: true, audition: true, roll: false, listen: true }),
   );
@@ -95,6 +122,8 @@ export function Player({ song, queue, onNavigate, onExit, onSaved }: Props) {
   useEffect(() => savePref(`rate.${song.id}`, rate), [rate, song.id]);
   useEffect(() => savePref('otherHand', otherHand), [otherHand]);
   useEffect(() => savePref('scoreOn', scoreOn), [scoreOn]);
+  useEffect(() => savePref('waitBy', waitBy), [waitBy]);
+  useEffect(() => savePref(`transpose.${id}`, transpose), [transpose, id]);
 
   const finished = useCallback(
     async (s: Session) => {
@@ -136,7 +165,7 @@ export function Player({ song, queue, onNavigate, onExit, onSaved }: Props) {
         metronome,
         loop: loopOn ? loop : null,
         autoSpeedUp: autoSpeed,
-        rollWait,
+        wait,
       },
       performance.now(),
     );
@@ -149,7 +178,7 @@ export function Player({ song, queue, onNavigate, onExit, onSaved }: Props) {
     if (import.meta.env.DEV) (window as unknown as { __pianistSession?: Session }).__pianistSession = s;
     setHud(s.hud(performance.now()));
     setRunning(true);
-  }, [song, mode, userHands, bothHands, otherHand, rate, metronome, loopOn, loop, autoSpeed, rollWait, finished]);
+  }, [song, mode, userHands, bothHands, otherHand, rate, metronome, loopOn, loop, autoSpeed, wait, finished]);
 
   const stop = useCallback(() => {
     const s = sessionRef.current;
@@ -167,7 +196,7 @@ export function Player({ song, queue, onNavigate, onExit, onSaved }: Props) {
 
   useEffect(() => {
     resetView();
-  }, [mode, hands, loopOn, loop, rollWait, otherHand, resetView]);
+  }, [mode, hands, loopOn, loop, wait, otherHand, song, resetView]);
 
   // Live tweaks during a run
   useEffect(() => {
@@ -329,6 +358,11 @@ export function Player({ song, queue, onNavigate, onExit, onSaved }: Props) {
             </button>
           </div>
         )}
+        {nextAction && (
+          <button className="btn" disabled={running} onClick={nextAction.run}>
+            {nextAction.label}
+          </button>
+        )}
         <nav className="mode-tabs" aria-label="Practice mode">
           {MODES.map((m) => (
             <button
@@ -428,16 +462,39 @@ export function Player({ song, queue, onNavigate, onExit, onSaved }: Props) {
             )}
         </div>
 
-        {mode === 'roll' && (
+        {canWait && (
           <button
-            className={`btn toggle ${rollWait ? 'on' : ''}`}
+            className={`btn toggle ${wait ? 'on' : ''}`}
             disabled={running}
-            onClick={() => setRollWait(!rollWait)}
-            title="Pause each note until you play it"
+            onClick={() => setWaitBy({ ...waitBy, [mode]: !wait })}
+            title={
+              wait
+                ? 'On: the music waits for the right notes. Click to keep going at tempo instead.'
+                : 'Off: the music keeps going at tempo and missed notes are marked. Click to wait for you.'
+            }
           >
-            Wait for me
+            {wait ? '⏸ Wait for me' : '▶ Keep going'}
           </button>
         )}
+
+        <div className="group" title="Transpose the whole piece. One step is a half step (C to C sharp); two steps take C to D.">
+          <span className="label">Key</span>
+          <button className="seg" disabled={running || transpose <= tMin} onClick={() => setTranspose(transpose - 1)} aria-label="Transpose down">
+            −
+          </button>
+          <span className="value transpose-value">
+            {keyName(song.keyFifths)}
+            {transpose !== 0 && <span className="muted"> ({transpose > 0 ? `+${transpose}` : transpose})</span>}
+          </span>
+          <button className="seg" disabled={running || transpose >= tMax} onClick={() => setTranspose(transpose + 1)} aria-label="Transpose up">
+            +
+          </button>
+          {transpose !== 0 && (
+            <button className="icon-btn" disabled={running} onClick={() => setTranspose(0)} title="Back to the original key">
+              ↺
+            </button>
+          )}
+        </div>
 
         <span className="spacer" />
         {song.scoreXml && (
@@ -471,10 +528,10 @@ export function Player({ song, queue, onNavigate, onExit, onSaved }: Props) {
           onPointerCancel={onPointerUp}
         />
         <div className="hud">
-          {running && hud && <HudView mode={mode} hud={hud} rollWait={rollWait} />}
+          {running && hud && <HudView mode={mode} hud={hud} />}
           {!running && !report && (
             <div className="hint">
-              <b>{MODE_LABELS[mode]}.</b> {MODE_HELP[mode]}
+              <b>{MODE_LABELS[mode]}.</b> {canWait && !wait ? KEEP_GOING_HELP : MODE_HELP[mode]}
               <div className="muted small">
                 Press <kbd>Space</kbd> or Start. {showScore ? 'Click bars in the score to loop them.' : ''}
                 {pianoState === 'loading' ? ' Loading piano sound…' : ''}
@@ -495,19 +552,19 @@ export function Player({ song, queue, onNavigate, onExit, onSaved }: Props) {
             setReport(null);
             void start();
           }}
-          onNext={nextSong ? () => onNavigate?.(nextSong) : undefined}
-          nextTitle={nextSong?.title}
+          onNext={nextSong ? () => onNavigate?.(nextSong) : nextAction?.run}
+          nextTitle={nextSong?.title ?? nextAction?.label}
         />
       )}
     </div>
   );
 }
 
-function HudView({ mode, hud, rollWait }: { mode: ModeKind; hud: Hud; rollWait: boolean }) {
+function HudView({ mode, hud }: { mode: ModeKind; hud: Hud }) {
   const pct = hud.accuracy === null ? '—' : `${Math.round(hud.accuracy * 100)}%`;
   if (mode === 'listen') return <div className="hud-line">Listening at {Math.round(hud.rate * 100)}%</div>;
   if (mode === 'audition') return <div className="hud-line rec">● Performing. Feedback comes at the end.</div>;
-  if (mode === 'roll' && !rollWait) {
+  if (hud.timed) {
     return (
       <div className="hud-line">
         <span className="combo">{hud.combo}×</span> combo · <b>{hud.perfect}</b> perfect · <b>{hud.good}</b> good ·{' '}

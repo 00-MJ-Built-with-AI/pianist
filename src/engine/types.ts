@@ -19,7 +19,8 @@ export interface SessionOptions {
   metronome: boolean;
   loop: { from: number; to: number } | null; // bar indexes, inclusive
   autoSpeedUp: boolean;
-  rollWait: boolean;
+  /** Wait for the right notes (Learn, Piano Roll) or for the player's pace (Practice); off keeps going at tempo. */
+  wait: boolean;
 }
 
 /** What happened to each note of the score. */
