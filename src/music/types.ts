@@ -9,6 +9,8 @@ export interface Note {
   hand: Hand;
   velocity: number; // 1–127, from the score's dynamics (64 when unmarked)
   measure: number; // index into Song.measures
+  /** Spell this note with a sharp or a flat regardless of the key (e.g. a raised leading tone). */
+  spell?: 'sharp' | 'flat';
 }
 
 export interface Measure {

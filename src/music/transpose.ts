@@ -3,9 +3,16 @@ import type { Song } from './types';
 
 const MAJOR_KEYS = ['Cb', 'Gb', 'Db', 'Ab', 'Eb', 'Bb', 'F', 'C', 'G', 'D', 'A', 'E', 'B', 'F#', 'C#'];
 
+const MINOR_KEYS = ['Ab', 'Eb', 'Bb', 'F', 'C', 'G', 'D', 'A', 'E', 'B', 'F#', 'C#', 'G#', 'D#', 'A#'];
+
 /** Name of the major key with this many sharps (positive) or flats (negative). */
 export function keyName(fifths: number): string {
   return MAJOR_KEYS[fifths + 7] ?? 'C';
+}
+
+/** Both keys that share a signature, e.g. "F/Dm". */
+export function keyNames(fifths: number): string {
+  return `${keyName(fifths)}/${MINOR_KEYS[fifths + 7] ?? 'A'}m`;
 }
 
 /** Key signature after moving `semitones`: up a half step adds 7 fifths; keep it within 6 flats … 5 sharps. */
@@ -29,7 +36,7 @@ export function transposeSong(song: Song, semitones: number): Song {
   const out: Song = {
     ...song,
     keyFifths: transposeKey(song.keyFifths, semitones),
-    notes: song.notes.map((n) => ({ ...n, pitch: Math.max(21, Math.min(108, n.pitch + semitones)) })),
+    notes: song.notes.map((n) => ({ ...n, spell: undefined, pitch: Math.max(21, Math.min(108, n.pitch + semitones)) })),
   };
   out.scoreXml = songToMusicXml(out);
   return out;

@@ -12,7 +12,7 @@ import { InputBar } from './InputBar';
 import type { Queue } from './Library';
 import { ReportView } from './Report';
 import { ScoreView, type ScoreHandle } from './ScoreView';
-import { keyName, transposeRange, transposeSong } from '../music/transpose';
+import { keyNames, transposeRange, transposeSong } from '../music/transpose';
 import { Stage } from './stage';
 
 const MODES: ModeKind[] = ['learn', 'practice', 'audition', 'roll', 'listen'];
@@ -483,7 +483,7 @@ export function Player({ song: baseSong, queue, preset, nextAction, onNavigate, 
             −
           </button>
           <span className="value transpose-value">
-            {keyName(song.keyFifths)}
+            {keyNames(song.keyFifths)}
             {transpose !== 0 && <span className="muted"> ({transpose > 0 ? `+${transpose}` : transpose})</span>}
           </span>
           <button className="seg" disabled={running || transpose >= tMax} onClick={() => setTranspose(transpose + 1)} aria-label="Transpose up">

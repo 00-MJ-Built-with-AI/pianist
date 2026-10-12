@@ -35,12 +35,16 @@ const NEUTRAL: Array<[string, number]> = [
   ['F', 1], ['G', 0], ['G', 1], ['A', 0], ['B', -1], ['B', 0],
 ];
 
-/** Spells a MIDI pitch for notation, choosing sharps or flats from the key signature. */
-export function spell(pitch: number, keyFifths: number): Spelling {
+/** Spells a MIDI pitch for notation, choosing sharps or flats from the key signature (or a per-note hint). */
+export function spell(pitch: number, keyFifths: number, hint?: 'sharp' | 'flat'): Spelling {
   const pc = ((pitch % 12) + 12) % 12;
   let step: string;
   let alter: number;
-  if (keyFifths > 0) {
+  if (hint) {
+    const n = (hint === 'sharp' ? SHARP_NAMES : FLAT_NAMES)[pc];
+    step = n[0];
+    alter = n.length > 1 ? (hint === 'sharp' ? 1 : -1) : 0;
+  } else if (keyFifths > 0) {
     const n = SHARP_NAMES[pc];
     step = n[0];
     alter = n.length > 1 ? 1 : 0;

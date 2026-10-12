@@ -21,6 +21,7 @@ import {
 import { useSettings } from './store/settings';
 import { InputBar } from './ui/InputBar';
 import { Library, type Queue } from './ui/Library';
+import type { PlayerPreset } from './ui/Player';
 import { Progress } from './ui/Progress';
 import { SettingsPage } from './ui/SettingsPage';
 
@@ -28,12 +29,15 @@ import { SettingsPage } from './ui/SettingsPage';
 const Player = lazy(() => import('./ui/Player').then((m) => ({ default: m.Player })));
 const Recorder = lazy(() => import('./ui/Recorder').then((m) => ({ default: m.Recorder })));
 const Transcriber = lazy(() => import('./ui/Transcriber').then((m) => ({ default: m.Transcriber })));
+const Exercises = lazy(() => import('./ui/Exercises').then((m) => ({ default: m.Exercises })));
 const loading = <div className="loading muted">Loading…</div>;
 
+type Tab = 'library' | 'exercises' | 'progress' | 'settings';
+
 type View =
-  | { name: 'library' | 'progress' | 'settings' | 'record' }
+  | { name: Tab | 'record' }
   | { name: 'transcribe'; file: File | null; collectionId: string | null }
-  | { name: 'play'; song: Song; queue?: Queue };
+  | { name: 'play'; song: Song; queue?: Queue; preset?: PlayerPreset; next?: () => Song; returnTo?: Tab };
 
 export function App() {
   const [view, setView] = useState<View>({ name: 'library' });
@@ -121,15 +125,17 @@ export function App() {
   };
 
   if (view.name === 'play') {
-    const { queue } = view;
+    const { queue, next } = view;
     return (
       <Suspense fallback={loading}>
         <Player
           key={view.song.id}
           song={view.song}
           queue={queue}
+          preset={view.preset}
+          nextAction={next ? { label: '↻ New piece', run: () => setView({ ...view, song: next() }) } : undefined}
           onNavigate={(song) => setView({ name: 'play', song, queue })}
-          onExit={() => setView({ name: 'library' })}
+          onExit={() => setView({ name: view.returnTo ?? 'library' })}
           onSaved={refresh}
         />
       </Suspense>
@@ -144,7 +150,7 @@ export function App() {
           Pianist
         </div>
         <nav className="nav">
-          {(['library', 'progress', 'settings'] as const).map((n) => (
+          {(['library', 'exercises', 'progress', 'settings'] as const).map((n) => (
             <button key={n} className={`tab ${view.name === n ? 'active' : ''}`} onClick={() => setView({ name: n })}>
               {n[0].toUpperCase() + n.slice(1)}
             </button>
@@ -181,6 +187,11 @@ export function App() {
               await refresh();
             }}
           />
+        )}
+        {view.name === 'exercises' && (
+          <Suspense fallback={loading}>
+            <Exercises onStart={(l) => setView({ name: 'play', song: l.song, preset: l.preset, next: l.next, returnTo: 'exercises' })} />
+          </Suspense>
         )}
         {view.name === 'progress' && <Progress songs={[...builtin, ...mine]} />}
         {view.name === 'settings' && <SettingsPage />}

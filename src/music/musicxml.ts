@@ -30,6 +30,7 @@ interface ChordEvent {
   start: number; // units
   end: number;
   pitches: number[];
+  hints: Map<number, 'sharp' | 'flat'>;
 }
 
 interface Piece extends ChordEvent {
@@ -39,24 +40,26 @@ interface Piece extends ChordEvent {
 
 /** Turns one hand's notes into a single-voice chord sequence (later onsets cut earlier chords short). */
 function chordEvents(song: Song, hand: Hand): ChordEvent[] {
-  const groups = new Map<number, { pitches: Set<number>; end: number }>();
+  const groups = new Map<number, { pitches: Set<number>; end: number; hints: Map<number, 'sharp' | 'flat'> }>();
   for (const n of song.notes) {
     if (n.hand !== hand) continue;
     const start = Math.round(n.start * DIVISIONS);
     const end = Math.max(start + 1, Math.round((n.start + n.dur) * DIVISIONS));
-    const g = groups.get(start);
+    let g = groups.get(start);
     if (g) {
       g.pitches.add(n.pitch);
       g.end = Math.max(g.end, end);
     } else {
-      groups.set(start, { pitches: new Set([n.pitch]), end });
+      g = { pitches: new Set([n.pitch]), end, hints: new Map() };
+      groups.set(start, g);
     }
+    if (n.spell) g.hints.set(n.pitch, n.spell);
   }
   const starts = [...groups.keys()].sort((a, b) => a - b);
   return starts.map((start, i) => {
     const g = groups.get(start)!;
     const next = starts[i + 1] ?? Infinity;
-    return { start, end: Math.min(g.end, next), pitches: [...g.pitches].sort((a, b) => a - b) };
+    return { start, end: Math.min(g.end, next), pitches: [...g.pitches].sort((a, b) => a - b), hints: g.hints };
   });
 }
 
@@ -80,7 +83,7 @@ export function songToMusicXml(song: Song): string {
       let b = bi;
       while (s < ev.end && b < bars.length) {
         const e = Math.min(ev.end, bars[b].end);
-        perBar[b].push({ start: s, end: e, pitches: ev.pitches, tieFrom: s > ev.start, tieTo: e < ev.end });
+        perBar[b].push({ start: s, end: e, pitches: ev.pitches, hints: ev.hints, tieFrom: s > ev.start, tieTo: e < ev.end });
         s = e;
         b++;
       }
@@ -169,7 +172,7 @@ export function songToMusicXml(song: Song): string {
           const tieStop = k > 0 || p.tieFrom;
           const tieStart = k < parts.length - 1 || p.tieTo;
           p.pitches.forEach((pitch, ci) => {
-            const sp = spell(pitch, song.keyFifths);
+            const sp = spell(pitch, song.keyFifths, p.hints.get(pitch));
             const alter = sp.alter ? `<alter>${sp.alter}</alter>` : '';
             const ties = (tieStop ? '<tie type="stop"/>' : '') + (tieStart ? '<tie type="start"/>' : '');
             const tied = (tieStop ? '<tied type="stop"/>' : '') + (tieStart ? '<tied type="start"/>' : '');
