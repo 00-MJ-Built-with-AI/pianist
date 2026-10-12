@@ -27,6 +27,7 @@ import { scaleExercise, sightReading } from './music/exercises';
 import { buildPlan, type PlanItem } from './store/plan';
 import { useSettings } from './store/settings';
 import { InputBar } from './ui/InputBar';
+import { InstallButton } from './ui/InstallButton';
 import { Library, type Queue } from './ui/Library';
 import type { PlayerPreset } from './ui/Player';
 import type { EarKind } from './music/ear';
@@ -213,6 +214,7 @@ export function App() {
           ))}
         </nav>
         <span className="spacer" />
+        <InstallButton />
         <InputBar />
       </header>
       <main className="main">

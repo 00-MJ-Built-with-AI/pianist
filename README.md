@@ -42,6 +42,17 @@ metronome with count-in, A–B bar loops (click bars in the score) with automati
   music updating live; change tempo, time and key signature.
 * **Export**: MusicXML, MIDI, or print / save as PDF.
 * **Timing calibration**: play along with 12 clicks and Pianist measures and corrects your piano's delay.
+* **Practice coach**: pick a passage; it walks you through right hand → left hand → together slowly → up to tempo →
+  a keep-going run, moving on after each clean pass.
+* **Ear training**: notes, intervals, chords and melodies; the app plays, you play it back; adaptive levels.
+* **On the sheet music**: missed / early / late notes and wrong notes are marked on the score, and suggested
+  fingering can be shown (a small optimiser using thumb-under, span and black-key rules).
+* **Moving around**: jump a bar back or forward while playing (or click a bar), skip a note you're stuck on, start
+  from any bar.
+* **Display**: note names on all / white / C / no keys as letters, letters with octave or Do Re Mi; names on falling
+  notes, key highlights, falling notes and keyboard size can be switched.
+* **Install & offline**: installable app (manifest + service worker that caches the whole app, the note-detector model
+  and the piano sound after first use); touch-friendly, multi-touch on-screen keyboard for tablets.
 
 ## The report
 

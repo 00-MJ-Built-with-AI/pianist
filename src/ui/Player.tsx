@@ -95,7 +95,8 @@ export function Player({ song: baseSong, queue, preset, nextAction, onNavigate, 
   const stageRef = useRef<Stage | null>(null);
   const scoreRef = useRef<ScoreHandle>(null);
   const sessionRef = useRef<Session | null>(null);
-  const pointerPitch = useRef<number | null>(null);
+  // On-screen keys: one pitch per finger / pointer, so chords work on touch screens.
+  const pointerPitch = useRef(new Map<number, number>());
 
   const queueIndex = queue ? queue.songs.findIndex((s) => s.id === song.id) : -1;
   const prevSong = queue && queueIndex > 0 ? queue.songs[queueIndex - 1] : null;
@@ -408,22 +409,40 @@ export function Player({ song: baseSong, queue, preset, nextAction, onNavigate, 
     if (mode === 'audition' || mode === 'listen') setMode('practice');
   };
 
-  const onPointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
+  const pitchUnder = (e: React.PointerEvent<HTMLCanvasElement>) => {
     const stage = stageRef.current;
-    if (!stage) return;
+    if (!stage) return null;
     const r = e.currentTarget.getBoundingClientRect();
-    const p = stage.pitchAt(e.clientX - r.left, e.clientY - r.top);
+    return stage.pitchAt(e.clientX - r.left, e.clientY - r.top);
+  };
+  const onPointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    const p = pitchUnder(e);
     if (p === null) return;
     void resumeAudio();
     void piano.load();
-    e.currentTarget.setPointerCapture(e.pointerId);
-    pointerPitch.current = p;
+    try {
+      e.currentTarget.setPointerCapture(e.pointerId);
+    } catch {
+      // not capturable; the key still sounds
+    }
+    pointerPitch.current.set(e.pointerId, p);
+    inputHub.noteOn({ pitch: p, velocity: 80, time: e.timeStamp, source: 'screen' });
+  };
+  // Sliding a finger along the keys plays each key it reaches.
+  const onPointerMove = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    const prev = pointerPitch.current.get(e.pointerId);
+    if (prev === undefined) return;
+    const p = pitchUnder(e);
+    if (p === null || p === prev) return;
+    inputHub.noteOff(prev, e.timeStamp, 'screen');
+    pointerPitch.current.set(e.pointerId, p);
     inputHub.noteOn({ pitch: p, velocity: 80, time: e.timeStamp, source: 'screen' });
   };
   const onPointerUp = (e: React.PointerEvent<HTMLCanvasElement>) => {
-    if (pointerPitch.current === null) return;
-    inputHub.noteOff(pointerPitch.current, e.timeStamp, 'screen');
-    pointerPitch.current = null;
+    const p = pointerPitch.current.get(e.pointerId);
+    if (p === undefined) return;
+    pointerPitch.current.delete(e.pointerId);
+    if (![...pointerPitch.current.values()].includes(p)) inputHub.noteOff(p, e.timeStamp, 'screen');
   };
 
   const barOptions = useMemo(
@@ -681,6 +700,7 @@ export function Player({ song: baseSong, queue, preset, nextAction, onNavigate, 
           ref={canvasRef}
           className="stage"
           onPointerDown={onPointerDown}
+          onPointerMove={onPointerMove}
           onPointerUp={onPointerUp}
           onPointerCancel={onPointerUp}
         />

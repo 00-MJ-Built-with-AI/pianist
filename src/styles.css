@@ -1927,3 +1927,65 @@ section {
     flex-wrap: wrap;
   }
 }
+
+/* ---------- touch screens and tablets */
+
+button,
+.card,
+.today-item {
+  touch-action: manipulation;
+}
+
+.stage,
+.roll-wrap,
+.ear-keys,
+.rec-keys {
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+}
+
+@media (pointer: coarse) {
+  .btn,
+  .seg,
+  .tab,
+  .shelf-chip,
+  .chip-btn {
+    min-height: 40px;
+  }
+
+  .toolbar select,
+  .form select,
+  .form input,
+  .display-form select {
+    min-height: 38px;
+  }
+
+  .icon-btn {
+    min-width: 34px;
+    min-height: 34px;
+  }
+
+  .tempo input[type='range'] {
+    width: 170px;
+  }
+}
+
+/* iPad on a music stand: landscape tablet */
+@media (pointer: coarse) and (min-width: 900px) and (orientation: landscape) {
+  .player-head {
+    padding: 8px 14px;
+  }
+
+  .score {
+    max-height: 32vh;
+  }
+}
+
+/* Safe areas on devices with a notch */
+.app-head,
+.player-head,
+.editor-head {
+  padding-left: max(16px, env(safe-area-inset-left));
+  padding-right: max(16px, env(safe-area-inset-right));
+}
