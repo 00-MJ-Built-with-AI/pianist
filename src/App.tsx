@@ -29,6 +29,7 @@ import { useSettings } from './store/settings';
 import { InputBar } from './ui/InputBar';
 import { Library, type Queue } from './ui/Library';
 import type { PlayerPreset } from './ui/Player';
+import type { EarKind } from './music/ear';
 import { Progress } from './ui/Progress';
 import { SettingsPage } from './ui/SettingsPage';
 
@@ -38,6 +39,7 @@ const Recorder = lazy(() => import('./ui/Recorder').then((m) => ({ default: m.Re
 const Transcriber = lazy(() => import('./ui/Transcriber').then((m) => ({ default: m.Transcriber })));
 const Exercises = lazy(() => import('./ui/Exercises').then((m) => ({ default: m.Exercises })));
 const Editor = lazy(() => import('./ui/Editor').then((m) => ({ default: m.Editor })));
+const EarTraining = lazy(() => import('./ui/EarTraining').then((m) => ({ default: m.EarTraining })));
 const loading = <div className="loading muted">Loading…</div>;
 
 type Tab = 'library' | 'exercises' | 'progress' | 'settings';
@@ -46,7 +48,8 @@ type View =
   | { name: Tab | 'record' }
   | { name: 'transcribe'; file: File | null; collectionId: string | null }
   | { name: 'play'; song: Song; queue?: Queue; preset?: PlayerPreset; next?: () => Song; returnTo?: Tab }
-  | { name: 'edit'; song: Song; back: View };
+  | { name: 'edit'; song: Song; back: View }
+  | { name: 'ear'; kind: EarKind };
 
 export function App() {
   const [view, setView] = useState<View>({ name: 'library' });
@@ -246,7 +249,15 @@ export function App() {
         )}
         {view.name === 'exercises' && (
           <Suspense fallback={loading}>
-            <Exercises onStart={(l) => setView({ name: 'play', song: l.song, preset: l.preset, next: l.next, returnTo: 'exercises' })} />
+            <Exercises
+              onStart={(l) => setView({ name: 'play', song: l.song, preset: l.preset, next: l.next, returnTo: 'exercises' })}
+              onEar={(kind) => setView({ name: 'ear', kind })}
+            />
+          </Suspense>
+        )}
+        {view.name === 'ear' && (
+          <Suspense fallback={loading}>
+            <EarTraining initialKind={view.kind} onExit={() => setView({ name: 'exercises' })} />
           </Suspense>
         )}
         {view.name === 'progress' && <Progress songs={[...builtin, ...mine]} />}

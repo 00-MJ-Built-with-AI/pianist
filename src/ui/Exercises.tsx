@@ -11,6 +11,7 @@ import {
   type ScaleKind,
 } from '../music/exercises';
 import type { Song } from '../music/types';
+import { EAR_LEVELS, type EarKind } from '../music/ear';
 import type { PlayerPreset } from './Player';
 import { loadPref, savePref } from '../store/settings';
 
@@ -57,7 +58,7 @@ export function newSeed(): number {
   return Math.floor(Math.random() * 1e9);
 }
 
-export function Exercises({ onStart }: { onStart: (launch: ExerciseLaunch) => void }) {
+export function Exercises({ onStart, onEar }: { onStart: (launch: ExerciseLaunch) => void; onEar: (kind: EarKind) => void }) {
   const [p, setP] = useState<Prefs>(() => ({ ...DEFAULTS, ...loadPref<Partial<Prefs>>('exercises', {}) }));
   const set = (patch: Partial<Prefs>) => {
     const next = { ...p, ...patch };
@@ -75,8 +76,35 @@ export function Exercises({ onStart }: { onStart: (launch: ExerciseLaunch) => vo
 
   const sight = () => sightReading(p.level, p.bars, newSeed());
 
+  const earLevels = loadPref<Partial<Record<EarKind, { level: number }>>>('ear', {});
+
   return (
     <div className="exercises">
+      <section className="ex-card">
+        <h2>Ear training</h2>
+        <p className="muted small">The app plays something; you play it back on your piano. It gets harder as you get it right.</p>
+        <div className="levels">
+          {(
+            [
+              ['notes', 'Notes'],
+              ['intervals', 'Intervals'],
+              ['chords', 'Chords'],
+              ['melodies', 'Melodies'],
+            ] as Array<[EarKind, string]>
+          ).map(([k, label]) => {
+            const lv = earLevels[k]?.level ?? 1;
+            return (
+              <button key={k} className="level-pick" onClick={() => onEar(k)}>
+                <b>
+                  {label} <span className="muted small">· level {lv}</span>
+                </b>
+                <span className="muted small">{EAR_LEVELS[k][lv - 1]}</span>
+              </button>
+            );
+          })}
+        </div>
+      </section>
+
       <section className="ex-card">
         <h2>Scales & arpeggios</h2>
         <p className="muted small">Every major and minor key, one or two octaves. Hands separately first, then together.</p>

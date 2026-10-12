@@ -1704,6 +1704,55 @@ section {
   box-shadow: inset 0 0 0 1px var(--accent);
 }
 
+/* ---------- ear training */
+
+.ear-card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.ear-info {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.ear-stats {
+  display: flex;
+  gap: 16px;
+  font-variant-numeric: tabular-nums;
+}
+
+.ear-status {
+  font-size: 18px;
+  min-height: 30px;
+}
+
+.ear-status .ok {
+  color: var(--green);
+  font-weight: 650;
+}
+
+.ear-status .bad {
+  color: var(--red);
+  font-weight: 650;
+}
+
+.ear-message {
+  margin-top: 6px;
+  font-size: 14px;
+  color: var(--accent);
+}
+
+.ear-keys {
+  width: 100%;
+  height: 140px;
+  display: block;
+  border-radius: 10px;
+}
+
 /* ---------- transcriber */
 
 .transcriber.dragging {
