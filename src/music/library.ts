@@ -116,6 +116,26 @@ export const LIBRARY_TEXT: TextSong[] = [
       'D3/h A2/h | B2/h F#2/h | G2/h D2/h | G2/h A2/h | D3/w |',
   },
   {
+    // An original composition for Pianist: a slow pentatonic lullaby over open fifths.
+    id: 'lantern-river-lullaby',
+    title: 'Lantern River Lullaby',
+    composer: 'Pianist (original)',
+    level: 2,
+    bpm: 66,
+    time: '4/4',
+    key: 1,
+    rh:
+      '!p D5/h B4/q A4/q | G4/h. E4/q | D4/q E4/q G4/q A4/q | B4/w | ' +
+      'D5/h E5/q D5/q | B4/h A4/q G4/q | A4/q B4/q A4/q E4/q | A4/w | ' +
+      '!mp B4/q. A4/e G4/q E4/q | D4/h E4/h | G4/q A4/q B4/q D5/q | E5/h. D5/q | ' +
+      'B4/q. D5/e E5/q D5/q | B4/h A4/h | !p A4/q. G4/e E4/q A4/q | G4/w |',
+    lh:
+      '!pp G2+D3/w | E2+B2/w | C3+G3/w | G2+D3/w | ' +
+      'G2+D3/w | E2+B2/w | A2+E3/w | D2+A2/w | ' +
+      '!p E2/h B2/h | C3/h G3/h | G2/h D3/h | C3/h G3/h | ' +
+      'G2/h D3/h | E2/h D2/h | !pp C3/h D3/h | G2+D3+G3/w |',
+  },
+  {
     id: 'minuet-in-g',
     title: 'Minuet in G (Simplified)',
     composer: 'C. Petzold (attr. J.S. Bach)',
