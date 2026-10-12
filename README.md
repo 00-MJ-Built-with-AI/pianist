@@ -27,7 +27,21 @@ black keys, `Z`/`X` octave, `Shift` = pedal) or click the on-screen keys.
 | **Listen** | The app plays the piece (sampled grand piano) while the score and notes scroll. |
 
 Shared tools: choose left / right / both hands (the app plays or mutes the other hand), tempo 25–150 %,
-metronome with count-in, and A–B bar loops (click bars in the score) with automatic speed-up after clean passes.
+metronome with count-in, A–B bar loops (click bars in the score) with automatic speed-up after clean passes,
+**Wait for me / Keep going** (wait for the right notes, or keep playing at tempo and mark misses), and
+**transpose** by half steps (C→D is two steps; the key signature follows).
+
+## More
+
+* **Today's practice**: a daily plan on the library page built from your history: a rotating scale warm-up, the
+  weakest bars from recent reports as slowed-down loops, a rusty piece to review (or one ready for Audition),
+  something new, and a sight-reading piece of the day, with a 15-minute goal.
+* **Exercises**: scales (major, natural / harmonic minor) and arpeggios in all 12 keys, chord progressions with smooth
+  voice leading, and an endless sight-reading generator in four levels.
+* **Note editor**: fix any song on a piano-roll grid (add, move, resize, delete, switch hands, undo/redo) with the sheet
+  music updating live; change tempo, time and key signature.
+* **Export**: MusicXML, MIDI, or print / save as PDF.
+* **Timing calibration**: play along with 12 clicks and Pianist measures and corrects your piano's delay.
 
 ## The report
 

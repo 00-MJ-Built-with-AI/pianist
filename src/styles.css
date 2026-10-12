@@ -1437,6 +1437,82 @@ section {
   line-height: 1.6;
 }
 
+/* ---------- editor */
+
+.editor {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.editor-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 16px;
+  background: var(--bg2);
+  border-bottom: 1px solid var(--line);
+}
+
+.title-field {
+  font-size: 17px;
+  font-weight: 650;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  padding: 4px 8px;
+  min-width: 0;
+  flex: 1;
+  max-width: 420px;
+}
+
+.title-field:hover,
+.title-field:focus {
+  border-color: var(--line);
+  background: var(--bg3);
+  outline: none;
+}
+
+.editor-tools input[type='range'] {
+  width: 110px;
+  accent-color: var(--accent);
+}
+
+.toolbar input.num {
+  width: 64px;
+  background: var(--bg3);
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  padding: 5px 6px;
+}
+
+.roll-wrap {
+  position: relative;
+  flex: 1;
+  min-height: 260px;
+  overflow: auto;
+  outline: none;
+  border-top: 1px solid var(--line);
+  touch-action: none;
+}
+
+.roll-wrap:focus-visible {
+  box-shadow: inset 0 0 0 2px rgba(255, 209, 102, 0.35);
+}
+
+.roll-canvas {
+  position: sticky;
+  left: 0;
+  top: 0;
+  display: block;
+}
+
+.editor-help {
+  margin: 0;
+  padding: 6px 16px 10px;
+  line-height: 1.5;
+}
+
 /* ---------- exercises */
 
 .exercises {

@@ -8,6 +8,7 @@ import { inputHub } from '../input/hub';
 import type { Hand, Song } from '../music/types';
 import { addPracticeTime, saveSession, updateBest } from '../store/db';
 import { loadPref, savePref, useSettings } from '../store/settings';
+import { ExportMenu } from './ExportMenu';
 import { InputBar } from './InputBar';
 import type { Queue } from './Library';
 import { ReportView } from './Report';
@@ -46,11 +47,12 @@ interface Props {
   /** An extra "next" button, e.g. a new sight-reading exercise. */
   nextAction?: { label: string; run: () => void };
   onNavigate?: (song: Song) => void;
+  onEdit?: () => void;
   onExit: () => void;
   onSaved?: () => void;
 }
 
-export function Player({ song: baseSong, queue, preset, nextAction, onNavigate, onExit, onSaved }: Props) {
+export function Player({ song: baseSong, queue, preset, nextAction, onNavigate, onEdit, onExit, onSaved }: Props) {
   const settings = useSettings();
   const id = baseSong.id;
   const [transpose, setTranspose] = useState<number>(() => preset?.transpose ?? loadPref(`transpose.${id}`, 0));
@@ -363,6 +365,12 @@ export function Player({ song: baseSong, queue, preset, nextAction, onNavigate, 
             {nextAction.label}
           </button>
         )}
+        {onEdit && (
+          <button className="btn" disabled={running} onClick={onEdit} title="Fix or change notes">
+            ✎ Edit
+          </button>
+        )}
+        <ExportMenu song={song} disabled={running} />
         <nav className="mode-tabs" aria-label="Practice mode">
           {MODES.map((m) => (
             <button

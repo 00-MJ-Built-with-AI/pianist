@@ -37,6 +37,7 @@ const Player = lazy(() => import('./ui/Player').then((m) => ({ default: m.Player
 const Recorder = lazy(() => import('./ui/Recorder').then((m) => ({ default: m.Recorder })));
 const Transcriber = lazy(() => import('./ui/Transcriber').then((m) => ({ default: m.Transcriber })));
 const Exercises = lazy(() => import('./ui/Exercises').then((m) => ({ default: m.Exercises })));
+const Editor = lazy(() => import('./ui/Editor').then((m) => ({ default: m.Editor })));
 const loading = <div className="loading muted">Loading…</div>;
 
 type Tab = 'library' | 'exercises' | 'progress' | 'settings';
@@ -44,7 +45,8 @@ type Tab = 'library' | 'exercises' | 'progress' | 'settings';
 type View =
   | { name: Tab | 'record' }
   | { name: 'transcribe'; file: File | null; collectionId: string | null }
-  | { name: 'play'; song: Song; queue?: Queue; preset?: PlayerPreset; next?: () => Song; returnTo?: Tab };
+  | { name: 'play'; song: Song; queue?: Queue; preset?: PlayerPreset; next?: () => Song; returnTo?: Tab }
+  | { name: 'edit'; song: Song; back: View };
 
 export function App() {
   const [view, setView] = useState<View>({ name: 'library' });
@@ -169,8 +171,25 @@ export function App() {
           preset={view.preset}
           nextAction={next ? { label: '↻ New piece', run: () => setView({ ...view, song: next() }) } : undefined}
           onNavigate={(song) => setView({ name: 'play', song, queue })}
+          onEdit={() => setView({ name: 'edit', song: view.song, back: view })}
           onExit={() => setView({ name: view.returnTo ?? 'library' })}
           onSaved={refresh}
+        />
+      </Suspense>
+    );
+  }
+
+  if (view.name === 'edit') {
+    return (
+      <Suspense fallback={loading}>
+        <Editor
+          song={view.song}
+          onCancel={() => setView(view.back)}
+          onSave={async (song) => {
+            await saveSong(song);
+            await refresh();
+            setView({ name: 'play', song });
+          }}
         />
       </Suspense>
     );
