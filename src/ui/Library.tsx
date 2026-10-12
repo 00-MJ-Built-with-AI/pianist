@@ -3,6 +3,7 @@ import { MODE_LABELS, type ModeKind } from '../engine/types';
 import type { Song } from '../music/types';
 import { hasSong, moveSong, toggleSong, type Collection } from '../store/collections';
 import type { Best } from '../store/db';
+import { isAudioFile } from '../music/audioFiles';
 import { loadPref, savePref } from '../store/settings';
 
 export interface Queue {
@@ -18,6 +19,7 @@ interface Props {
   onOpen: (song: Song, queue?: Queue) => void;
   onImport: (files: File[], collection: Collection | null) => Promise<{ imported: Song[]; errors: string[] }>;
   onRecord: () => void;
+  onTranscribe: (file: File | null, collection: Collection | null) => void;
   onDelete: (song: Song) => void;
   onCreateCollection: (name: string, songIds?: string[]) => Promise<Collection>;
   onSaveCollection: (c: Collection) => Promise<void>;
@@ -27,6 +29,13 @@ interface Props {
 const LEVELS = ['', 'First steps', 'Beginner', 'Elementary', 'Intermediate', 'Advanced'];
 const BEST_MODES: ModeKind[] = ['learn', 'practice', 'audition', 'roll'];
 const ACCEPT = '.mid,.midi,.xml,.musicxml,.mxl';
+const SOURCE_LABEL: Record<Song['source'], string> = {
+  builtin: '',
+  midi: 'from MIDI',
+  musicxml: 'from MUSICXML',
+  recording: 'recorded',
+  audio: 'from audio',
+};
 
 /** Inline text field that commits on Enter and cancels on Escape or blur. */
 function NameField({ initial, placeholder, onDone }: { initial?: string; placeholder: string; onDone: (name: string | null) => void }) {
@@ -198,7 +207,7 @@ function SongCard({ song, bests, collections, onOpen, onDelete, onToggle, onCrea
       <div className="muted">{song.composer || ' '}</div>
       <div className="card-meta muted small">
         {bars} bar{bars === 1 ? '' : 's'} · {song.timeSig[0]}/{song.timeSig[1]} · {song.bpm} bpm
-        {song.source !== 'builtin' ? ` · ${song.source === 'recording' ? 'recorded' : `from ${song.source.toUpperCase()}`}` : ''}
+        {song.source !== 'builtin' ? ` · ${SOURCE_LABEL[song.source]}` : ''}
       </div>
       <div className="card-bests">
         {BEST_MODES.map((m) => {
@@ -232,7 +241,11 @@ export function Library(props: Props) {
   const byId = new Map([...mine, ...builtin].map((s) => [s.id, s]));
   const listSongs = current ? current.songIds.map((id) => byId.get(id)).filter((s): s is Song => !!s) : [];
 
-  const handleFiles = async (files: File[]) => {
+  const handleFiles = async (all: File[]) => {
+    // Audio recordings go to the transcriber; score files are imported directly.
+    const audio = all.find(isAudioFile);
+    if (audio) props.onTranscribe(audio, current);
+    const files = all.filter((f) => !isAudioFile(f));
     if (!files.length) return;
     setBusy(true);
     setNotice(null);
@@ -355,6 +368,9 @@ export function Library(props: Props) {
               <button className="btn" onClick={() => fileRef.current?.click()} disabled={busy}>
                 {busy ? 'Importing…' : '＋ Import files into this list'}
               </button>
+              <button className="btn" onClick={() => props.onTranscribe(null, current)}>
+                ♫ Transcribe audio
+              </button>
               <button className="btn ghost" onClick={() => setRenaming(true)}>
                 Rename
               </button>
@@ -399,6 +415,9 @@ export function Library(props: Props) {
               <div className="actions">
                 <button className="btn" onClick={() => fileRef.current?.click()} disabled={busy}>
                   {busy ? 'Importing…' : '＋ Import MIDI / MusicXML'}
+                </button>
+                <button className="btn" onClick={() => props.onTranscribe(null, null)}>
+                  ♫ Transcribe audio (MP3)
                 </button>
                 <button className="btn" onClick={onRecord}>
                   ● Record a song

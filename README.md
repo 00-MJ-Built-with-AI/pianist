@@ -41,6 +41,12 @@ your own pulse, a tempo curve, a dynamics chart (MIDI only), and a replay of you
   compact text notation in `src/music/library.ts` and engraved to MusicXML automatically.
 * Import `.mid`, `.musicxml`, `.xml` or `.mxl` (drag onto the library). MuseScore exports all of these.
 * **Record a song**: play with a metronome; your playing is quantized into sheet music you can practise.
+* **Transcribe audio**: drop an MP3 / WAV / M4A / OGG / FLAC (up to 10 minutes). Basic Pitch finds the notes in the
+  browser, then the app detects tempo and beat, places bar lines (including a pickup bar), splits the hands, guesses
+  the key signature and quantizes the rhythm. Tempo (×2 / ÷2), time signature, detail, hand split and simplification
+  ("Everything", "Melody + bass", "Melody only") can be changed instantly without re-running the model. Solo piano
+  recordings work best (on rendered piano audio: ~98 % of notes found, tempo exact); full band mixes come out rough.
+* **Collections**: group songs into ordered lists, import files straight into a list, and practise a list in order.
 
 Progress (best stars per mode, daily streak, minutes, session history with reports and replays) is stored in the
 browser's IndexedDB. Nothing leaves your computer.
@@ -57,7 +63,9 @@ browser's IndexedDB. Nothing leaves your computer.
 ## Code map
 
 ```
-src/music     song model, text notation, library, MusicXML generator, MIDI/MusicXML import, recording → song
+src/music     song model, text notation, library, MusicXML generator, MIDI/MusicXML import, recording → song,
+              beat tracking and arrangement of transcribed audio
+src/ai        Basic Pitch model loader, audio-file decoding and note extraction
 src/engine    clock, accompaniment/metronome scheduling, mode controllers, session, analysis → report
 src/input     input hub, MIDI, computer keyboard, microphone detector
 src/audio     Web Audio context, sampled piano, app-sound log

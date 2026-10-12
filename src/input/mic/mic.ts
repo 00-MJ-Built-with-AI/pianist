@@ -1,4 +1,5 @@
 import type * as TF from '@tensorflow/tfjs';
+import { FFT_HOP, loadBasicPitch, SAMPLE_RATE as SR, WINDOW_SAMPLES as N_SAMPLES, type LoadedModel } from '../../ai/basicPitch';
 import { isAppSound } from '../../audio/appSounds';
 import { getSettings } from '../../store/settings';
 import { inputHub } from '../hub';
@@ -11,9 +12,6 @@ import { Resampler } from './resampler';
  * true timestamps, so timing judgments stay accurate even though detection lags by ~0.25 s.
  */
 
-const SR = 22050;
-const N_SAMPLES = SR * 2 - 256; // model window, 43 844 samples
-const FFT_HOP = 256;
 const HOP_MS = 128;
 const EDGE_FRAMES = 9; // frames at the right edge the model can't judge yet (~100 ms)
 const MIN_PITCH = 21;
@@ -81,25 +79,11 @@ interface Engine {
 }
 
 let engine: Engine | null = null;
-let tf: typeof TF | null = null;
-let model: TF.GraphModel | null = null;
+let tf: LoadedModel['tf'] | null = null;
+let model: LoadedModel['model'] | null = null;
 
 async function loadModel(): Promise<void> {
-  if (model) return;
-  tf = await import('@tensorflow/tfjs');
-  try {
-    await tf.setBackend('webgl');
-  } catch {
-    await tf.setBackend('cpu');
-  }
-  await tf.ready();
-  model = await tf.loadGraphModel(`${import.meta.env.BASE_URL}models/basic-pitch/model.json`);
-  // Warm-up so the first real window isn't slow.
-  const warm = tf.zeros([1, N_SAMPLES, 1]);
-  const out = model.execute(warm, ['Identity_1', 'Identity_2']) as TF.Tensor[];
-  await Promise.all(out.map((t) => t.data()));
-  out.forEach((t) => t.dispose());
-  warm.dispose();
+  ({ tf, model } = await loadBasicPitch());
 }
 
 /** Detector state over the stream of 22 050 Hz samples. */

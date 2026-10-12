@@ -27,9 +27,13 @@ import { SettingsPage } from './ui/SettingsPage';
 // The practice screens carry the notation engine; load them when first opened.
 const Player = lazy(() => import('./ui/Player').then((m) => ({ default: m.Player })));
 const Recorder = lazy(() => import('./ui/Recorder').then((m) => ({ default: m.Recorder })));
+const Transcriber = lazy(() => import('./ui/Transcriber').then((m) => ({ default: m.Transcriber })));
 const loading = <div className="loading muted">Loading…</div>;
 
-type View = { name: 'library' | 'progress' | 'settings' | 'record' } | { name: 'play'; song: Song; queue?: Queue };
+type View =
+  | { name: 'library' | 'progress' | 'settings' | 'record' }
+  | { name: 'transcribe'; file: File | null; collectionId: string | null }
+  | { name: 'play'; song: Song; queue?: Queue };
 
 export function App() {
   const [view, setView] = useState<View>({ name: 'library' });
@@ -159,6 +163,7 @@ export function App() {
             onOpen={(song, queue) => setView({ name: 'play', song, queue })}
             onImport={onImport}
             onRecord={() => setView({ name: 'record' })}
+            onTranscribe={(file, collection) => setView({ name: 'transcribe', file, collectionId: collection?.id ?? null })}
             onDelete={async (song) => {
               if (!window.confirm(`Delete "${song.title}" from your songs?`)) return;
               await deleteSong(song.id);
@@ -179,6 +184,22 @@ export function App() {
         )}
         {view.name === 'progress' && <Progress songs={[...builtin, ...mine]} />}
         {view.name === 'settings' && <SettingsPage />}
+        {view.name === 'transcribe' && (
+          <Suspense fallback={loading}>
+            <Transcriber
+              initialFile={view.file}
+              defaultCollectionId={view.collectionId}
+              collections={collections}
+              onCancel={() => setView({ name: 'library' })}
+              onSaved={async (song, collection) => {
+                await saveSong(song);
+                if (collection) await saveCollection(addSongs(collection, [song.id]));
+                await refresh();
+                setView({ name: 'play', song });
+              }}
+            />
+          </Suspense>
+        )}
         {view.name === 'record' && (
           <Suspense fallback={loading}>
             <Recorder

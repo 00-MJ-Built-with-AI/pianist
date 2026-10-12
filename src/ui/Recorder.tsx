@@ -9,6 +9,7 @@ import { clickUnit, measureLength } from '../music/song';
 import type { Song } from '../music/types';
 import { ScoreView, type ScoreHandle } from './ScoreView';
 import { Stage } from './stage';
+import { useSongPreview } from './usePreview';
 
 interface Props {
   onCancel: () => void;
@@ -33,12 +34,11 @@ export function Recorder({ onCancel, onSaved }: Props) {
   const [song, setSong] = useState<Song | null>(null);
   const [display, setDisplay] = useState('');
   const [noteCount, setNoteCount] = useState(0);
-  const [previewing, setPreviewing] = useState(false);
   const events = useRef<Ev[]>([]);
   const t0 = useRef(0);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const scoreRef = useRef<ScoreHandle>(null);
-  const previewStop = useRef<(() => void) | null>(null);
+  const { playing: previewing, toggle: togglePreview } = useSongPreview(scoreRef);
   const timeSig = TIMES.find(([k]) => k === time)![1];
 
   // Live keyboard
@@ -127,36 +127,6 @@ export function Recorder({ onCancel, onSaved }: Props) {
     setDisplay(s ? '' : 'Nothing was played. Try again.');
   };
 
-  const preview = async () => {
-    if (!song) return;
-    if (previewing) {
-      previewStop.current?.();
-      return;
-    }
-    await resumeAudio();
-    await piano.load();
-    const startPerf = performance.now() + 150;
-    const bps = song.bpm / 60;
-    for (const n of song.notes) {
-      piano.noteOn(n.pitch, n.velocity, { when: perfToAudio(startPerf + (n.start / bps) * 1000), duration: n.dur / bps, bus: 'accomp' });
-    }
-    setPreviewing(true);
-    let raf = 0;
-    const tick = () => {
-      const beat = ((performance.now() - startPerf) / 1000) * bps;
-      scoreRef.current?.setBeat(beat);
-      if (beat > song.totalBeats) previewStop.current?.();
-      else raf = requestAnimationFrame(tick);
-    };
-    raf = requestAnimationFrame(tick);
-    previewStop.current = () => {
-      cancelAnimationFrame(raf);
-      piano.stopAll('accomp');
-      setPreviewing(false);
-      previewStop.current = null;
-    };
-  };
-  useEffect(() => () => previewStop.current?.(), []);
 
   return (
     <div className="recorder">
@@ -229,7 +199,7 @@ export function Recorder({ onCancel, onSaved }: Props) {
         <div className="review">
           <ScoreView ref={scoreRef} song={song} heat={null} loop={null} showPlayhead={previewing} />
           <div className="rec-controls">
-            <button className="btn" onClick={() => void preview()}>
+            <button className="btn" onClick={() => void togglePreview(song)}>
               {previewing ? '■ Stop' : '▶ Preview'}
             </button>
             <span className="muted">

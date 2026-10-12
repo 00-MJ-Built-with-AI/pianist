@@ -24,7 +24,7 @@ export interface DynamicMark {
   mark: string; // pp, p, mp, mf, f, ff
 }
 
-export type SongSource = 'builtin' | 'midi' | 'musicxml' | 'recording';
+export type SongSource = 'builtin' | 'midi' | 'musicxml' | 'recording' | 'audio';
 
 export interface Song {
   id: string;
