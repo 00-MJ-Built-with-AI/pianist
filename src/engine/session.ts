@@ -344,6 +344,7 @@ export class Session implements SessionContext {
         completed: completed || !!useLast,
         source: this.lastSource,
         regionMeasures: [this.region.fromMeasure, this.region.toMeasure],
+        weights: this.opts.weights,
       });
       this.report.mode = this.opts.mode;
     }

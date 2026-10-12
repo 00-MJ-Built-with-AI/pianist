@@ -7,6 +7,7 @@ import { checkAnswer, EAR_LEVELS, groupPresses, makeQuestion, nextLevel, seededR
 import { addPracticeTime } from '../store/db';
 import { loadPref, savePref, useSettings } from '../store/settings';
 import { Stage } from './stage';
+import { celebrate, say, sfx } from './feedback';
 
 interface Stats {
   level: number;
@@ -78,6 +79,8 @@ export function EarTraining({ initialKind, onExit }: { initialKind: EarKind; onE
     setPlayed(groups);
     setResult(r);
     setPhase('result');
+    sfx(r.correct ? 'success' : 'miss');
+    say(r.correct ? 'Right!' : 'Not quite.');
     setAllStats((all) => {
       const s = { ...all[kind] };
       s.total++;
@@ -93,6 +96,10 @@ export function EarTraining({ initialKind, onExit }: { initialKind: EarKind; onE
       const lv = nextLevel(s.level, s.streak, s.misses);
       if (lv !== s.level) {
         setMessage(lv > s.level ? `Level up! Now: ${EAR_LEVELS[kind][lv - 1]}` : `Back to level ${lv} for a bit`);
+        if (lv > s.level) {
+          celebrate();
+          sfx('levelup');
+        }
         s.level = lv;
         s.streak = 0;
         s.misses = 0;
@@ -147,7 +154,12 @@ export function EarTraining({ initialKind, onExit }: { initialKind: EarKind; onE
       chord.forEach((p, i) => piano.noteOn(p, 72, { when: t + i * 0.35, duration: 0.6, bus: 'accomp' }));
       t += chord.length * 0.35 + 0.4;
     }
-    timers.current.push(window.setTimeout(() => setPhase('listening'), (t - audioCtx().currentTime) * 1000));
+    timers.current.push(
+      window.setTimeout(() => {
+        setPhase('listening');
+        say('Your turn.');
+      }, (t - audioCtx().currentTime) * 1000),
+    );
   }, []);
 
   const next = useCallback(() => {

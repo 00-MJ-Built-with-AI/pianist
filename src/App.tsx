@@ -1,5 +1,5 @@
-import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from 'react';
-import { resumeAudio, setBusVolume } from './audio/audio';
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { resumeAudio, setBusVolume, setSound } from './audio/audio';
 import { piano } from './audio/piano';
 import { inputHub } from './input/hub';
 import { installComputerKeyboard } from './input/keyboard';
@@ -25,9 +25,11 @@ import {
 import type { Report } from './engine/types';
 import { scaleExercise, sightReading } from './music/exercises';
 import { buildPlan, type PlanItem } from './store/plan';
+import { useReminder } from './ui/reminder';
 import { useSettings } from './store/settings';
 import { InputBar } from './ui/InputBar';
 import { InstallButton } from './ui/InstallButton';
+import { ProfileMenu } from './ui/ProfileMenu';
 import { Library, type Queue } from './ui/Library';
 import type { PlayerPreset } from './ui/Player';
 import type { EarKind } from './music/ear';
@@ -80,6 +82,22 @@ export function App() {
   }, [refresh]);
 
   useEffect(() => installComputerKeyboard(), []);
+  useReminder(days);
+  const [reminderText, setReminderText] = useState<string | null>(null);
+  // Sticky bars below the header need its height (it wraps onto two rows on narrow screens).
+  const headRef = useRef<HTMLElement>(null);
+  useEffect(() => {
+    const el = headRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver(() => document.documentElement.style.setProperty('--header-h', `${el.offsetHeight}px`));
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+  useEffect(() => {
+    const on = (e: Event) => setReminderText((e as CustomEvent<string>).detail);
+    window.addEventListener('pianist-reminder', on);
+    return () => window.removeEventListener('pianist-reminder', on);
+  }, []);
 
   // Reconnect MIDI silently when the browser already allows it.
   useEffect(() => {
@@ -114,6 +132,9 @@ export function App() {
     setBusVolume('metronome', settings.metronomeVolume);
     setBusVolume('echo', settings.echoVolume);
     setBusVolume('guide', settings.guideVolume);
+    setSound(settings.pianoSound, settings.reverb);
+    inputHub.setControls(settings.handsFree ? settings.controls : {});
+    piano.electric = settings.pianoSound === 'electric';
     // Theme and hand colours for the whole interface.
     const root = document.documentElement;
     root.dataset.theme = settings.theme;
@@ -142,10 +163,22 @@ export function App() {
   };
 
   const plan = useMemo(
-    () => buildPlan({ today: new Date(), sessions, songs: [...builtin, ...mine], bests }),
-    [sessions, builtin, mine, bests],
+    () =>
+      buildPlan({
+        today: new Date(),
+        sessions,
+        songs: [...builtin, ...mine],
+        bests,
+        options: { items: settings.planItems, maxFix: settings.maxFix },
+      }),
+    [sessions, builtin, mine, bests, settings.planItems, settings.maxFix],
   );
   const todaySeconds = days.find((d) => d.date === dayKey())?.seconds ?? 0;
+  const lastPlayed = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const r of sessions) if ((m.get(r.songId) ?? 0) < r.date) m.set(r.songId, r.date);
+    return m;
+  }, [sessions]);
 
   const openPlanItem = (item: PlanItem) => {
     const l = item.launch;
@@ -208,7 +241,7 @@ export function App() {
 
   return (
     <div className="shell">
-      <header className="app-head">
+      <header className="app-head" ref={headRef}>
         <div className="brand" onClick={() => setView({ name: 'library' })}>
           <img src="/favicon.svg" alt="" width={28} height={28} />
           Pianist
@@ -221,9 +254,18 @@ export function App() {
           ))}
         </nav>
         <span className="spacer" />
+        <ProfileMenu />
         <InstallButton />
         <InputBar />
       </header>
+      {reminderText && (
+        <div className="reminder-banner">
+          ⏰ {reminderText}
+          <button className="icon-btn" onClick={() => setReminderText(null)} aria-label="Dismiss">
+            ✕
+          </button>
+        </div>
+      )}
       <main className="main">
         {view.name === 'library' && (
           <Library
@@ -233,6 +275,7 @@ export function App() {
             collections={collections}
             plan={plan}
             todaySeconds={todaySeconds}
+            lastPlayed={lastPlayed}
             onOpenPlan={openPlanItem}
             onOpen={(song, queue) => setView({ name: 'play', song, queue })}
             onImport={onImport}

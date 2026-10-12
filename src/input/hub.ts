@@ -10,6 +10,9 @@ export interface PlayedNote {
   source: InputSource;
 }
 
+export type ControlAction = 'startStop' | 'nextBar' | 'prevBar' | 'skip' | 'restart';
+export type ControlTrigger = { type: 'key'; pitch: number } | { type: 'cc'; cc: number };
+
 type NoteListener = (n: PlayedNote) => void;
 type OffListener = (pitch: number, time: number) => void;
 type PedalListener = (down: boolean, time: number) => void;
@@ -26,7 +29,69 @@ class InputHub {
   /** Milliseconds subtracted from MIDI timestamps to compensate for device latency. */
   midiLatency = 0;
 
+  /* ---- hands-free control: piano keys or pedals that act as buttons */
+  private controls = new Map<string, ControlAction>();
+  private actionListeners = new Set<(a: ControlAction) => void>();
+  private learner: ((t: ControlTrigger) => void) | null = null;
+  private swallowed = new Set<number>(); // control keys held down (their release is ignored)
+  private ccDown = new Set<number>();
+
+  setControls(map: Partial<Record<ControlAction, ControlTrigger>>): void {
+    this.controls.clear();
+    for (const [action, t] of Object.entries(map) as Array<[ControlAction, ControlTrigger]>) {
+      if (t) this.controls.set(t.type === 'key' ? `key:${t.pitch}` : `cc:${t.cc}`, action);
+    }
+  }
+
+  /** The next MIDI key or pedal press is handed to `cb` instead of being played (for assigning controls). */
+  learnNextControl(cb: ((t: ControlTrigger) => void) | null): void {
+    this.learner = cb;
+  }
+
+  onAction(l: (a: ControlAction) => void): () => void {
+    this.actionListeners.add(l);
+    return () => this.actionListeners.delete(l);
+  }
+
+  private fire(key: string): boolean {
+    const action = this.controls.get(key);
+    if (!action) return false;
+    this.actionListeners.forEach((l) => l(action));
+    return true;
+  }
+
+  /** A pedal or controller from the piano (other than the sustain pedal). */
+  controlChange(cc: number, value: number): void {
+    const down = value >= 64;
+    if (!down) {
+      this.ccDown.delete(cc);
+      return;
+    }
+    if (this.ccDown.has(cc)) return;
+    this.ccDown.add(cc);
+    if (this.learner) {
+      const l = this.learner;
+      this.learner = null;
+      l({ type: 'cc', cc });
+      return;
+    }
+    this.fire(`cc:${cc}`);
+  }
+
   noteOn(n: PlayedNote): void {
+    if (n.source === 'midi') {
+      if (this.learner) {
+        const l = this.learner;
+        this.learner = null;
+        this.swallowed.add(n.pitch);
+        l({ type: 'key', pitch: n.pitch });
+        return;
+      }
+      if (this.fire(`key:${n.pitch}`)) {
+        this.swallowed.add(n.pitch);
+        return;
+      }
+    }
     if (n.source === 'midi') n = { ...n, time: n.time - this.midiLatency };
     const prev = this.held.get(n.pitch);
     if (prev) this.noteOff(n.pitch, n.time, n.source);
@@ -38,6 +103,7 @@ class InputHub {
   }
 
   noteOff(pitch: number, time: number, source: InputSource): void {
+    if (source === 'midi' && this.swallowed.delete(pitch)) return;
     if (!this.held.has(pitch)) return;
     this.held.delete(pitch);
     if (source === 'keyboard' || source === 'screen' || (source === 'midi' && this.echoMidi)) {

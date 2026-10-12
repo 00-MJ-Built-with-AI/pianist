@@ -7,6 +7,10 @@ import { isAudioFile } from '../music/audioFiles';
 import { loadPref, savePref } from '../store/settings';
 import type { PlanItem } from '../store/plan';
 import { TodayPlan } from './TodayPlan';
+import { SongDetails } from './SongDetails';
+import { allTags, getSongMeta, setSongMeta, useSongMetaStore } from '../store/songMeta';
+
+type SortKey = 'default' | 'title' | 'level' | 'played' | 'stars' | 'added';
 
 export interface Queue {
   name: string;
@@ -20,6 +24,7 @@ interface Props {
   collections: Collection[];
   plan: PlanItem[];
   todaySeconds: number;
+  lastPlayed: Map<string, number>;
   onOpenPlan: (item: PlanItem) => void;
   onOpen: (song: Song, queue?: Queue) => void;
   onImport: (files: File[], collection: Collection | null) => Promise<{ imported: Song[]; errors: string[] }>;
@@ -140,20 +145,52 @@ interface CardProps {
   onToggle: (c: Collection) => void;
   onCreate: (name: string) => void;
   order?: { index: number; count: number; onMove: (delta: number) => void; onRemove: () => void };
+  onDetails?: () => void;
 }
 
-function SongCard({ song, bests, collections, onOpen, onDelete, onToggle, onCreate, order }: CardProps) {
+function SongCard({ song, bests, collections, onOpen, onDelete, onToggle, onCreate, order, onDetails }: CardProps) {
   const mine = bests.filter((b) => b.songId === song.id);
   const bars = song.measures.filter((m) => m.number > 0).length;
+  const meta = getSongMeta(song.id);
+  const level = meta.level ?? song.level;
   return (
-    <div className="card" role="button" tabIndex={0} onClick={onOpen} onKeyDown={(e) => e.key === 'Enter' && onOpen()}>
+    <div
+      className="card"
+      role="button"
+      tabIndex={0}
+      onClick={onOpen}
+      onKeyDown={(e) => e.key === 'Enter' && onOpen()}
+      style={meta.color ? { borderLeft: `5px solid ${meta.color}` } : undefined}
+    >
       <div className="card-top">
         {order ? (
           <span className="order-no">{order.index + 1}</span>
         ) : (
-          <span className={`level l${Math.min(5, song.level)}`}>{LEVELS[Math.min(5, song.level)] ?? `Level ${song.level}`}</span>
+          <span className={`level l${Math.min(5, level)}`}>{LEVELS[Math.min(5, level)] ?? `Level ${level}`}</span>
         )}
         <div className="card-actions">
+          <button
+            className={`icon-btn fav ${meta.favorite ? 'on' : ''}`}
+            title={meta.favorite ? 'Unpin from favourites' : 'Pin to favourites'}
+            onClick={(e) => {
+              e.stopPropagation();
+              setSongMeta(song.id, { favorite: !meta.favorite });
+            }}
+          >
+            {meta.favorite ? '★' : '☆'}
+          </button>
+          {onDetails && (
+            <button
+              className="icon-btn"
+              title="Name, emoji, colour, level, tags, notes"
+              onClick={(e) => {
+                e.stopPropagation();
+                onDetails();
+              }}
+            >
+              ⋯
+            </button>
+          )}
           {order ? (
             <>
               <button
@@ -208,8 +245,25 @@ function SongCard({ song, bests, collections, onOpen, onDelete, onToggle, onCrea
           )}
         </div>
       </div>
-      <h3>{song.title}</h3>
+      <h3>
+        {meta.emoji && <span className="card-emoji">{meta.emoji}</span>}
+        {meta.title ?? song.title}
+      </h3>
       <div className="muted">{song.composer || ' '}</div>
+      {(meta.tags?.length || meta.notes) && (
+        <div className="card-tags">
+          {meta.tags?.map((t) => (
+            <span key={t} className="tag">
+              #{t}
+            </span>
+          ))}
+          {meta.notes && (
+            <span className="tag note" title={meta.notes}>
+              📝
+            </span>
+          )}
+        </div>
+      )}
       <div className="card-meta muted small">
         {bars} bar{bars === 1 ? '' : 's'} · {song.timeSig[0]}/{song.timeSig[1]} · {song.bpm} bpm
         {song.source !== 'builtin' ? ` · ${SOURCE_LABEL[song.source]}` : ''}
@@ -239,6 +293,36 @@ export function Library(props: Props) {
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<{ text: string; errors: string[] } | null>(null);
   const [dragging, setDragging] = useState(false);
+  const metaStore = useSongMetaStore();
+  const [query, setQuery] = useState('');
+  const [sort, setSort] = useState<SortKey>(() => loadPref('librarySort', 'default'));
+  const [levelFilter, setLevelFilter] = useState(0);
+  const [tagFilter, setTagFilter] = useState('');
+  const [details, setDetails] = useState<Song | null>(null);
+  useEffect(() => savePref('librarySort', sort), [sort]);
+  const tags = allTags();
+  const starsOf = (id: string) => Math.max(0, ...bests.filter((b) => b.songId === id).map((b) => b.stars));
+  const view = (songs: Song[]) => {
+    const q = query.trim().toLowerCase();
+    const list = songs.filter((s) => {
+      const m = metaStore[s.id] ?? {};
+      if (levelFilter && (m.level ?? s.level) !== levelFilter) return false;
+      if (tagFilter && !(m.tags ?? []).includes(tagFilter)) return false;
+      if (q && !`${m.title ?? s.title} ${s.composer} ${(m.tags ?? []).join(' ')}`.toLowerCase().includes(q)) return false;
+      return true;
+    });
+    const title = (s: Song) => metaStore[s.id]?.title ?? s.title;
+    const cmp: Record<SortKey, (a: Song, b: Song) => number> = {
+      default: () => 0,
+      title: (a, b) => title(a).localeCompare(title(b)),
+      level: (a, b) => (metaStore[a.id]?.level ?? a.level) - (metaStore[b.id]?.level ?? b.level),
+      played: (a, b) => (props.lastPlayed.get(b.id) ?? 0) - (props.lastPlayed.get(a.id) ?? 0),
+      stars: (a, b) => starsOf(b.id) - starsOf(a.id),
+      added: (a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0),
+    };
+    return sort === 'default' ? list : [...list].sort(cmp[sort]);
+  };
+  const filtering = !!(query.trim() || levelFilter || tagFilter);
 
   // An id that no longer matches (still loading, or deleted) simply shows all songs.
   const current = collections.find((c) => c.id === active) ?? null;
@@ -271,6 +355,7 @@ export function Library(props: Props) {
 
   const card = (s: Song, extra: Partial<CardProps> = {}) => (
     <SongCard
+      onDetails={() => setDetails(s)}
       key={s.id}
       song={s}
       bests={bests}
@@ -415,6 +500,52 @@ export function Library(props: Props) {
       ) : (
         <>
           <TodayPlan items={props.plan} todaySeconds={props.todaySeconds} onOpen={props.onOpenPlan} />
+          <div className="lib-tools">
+            <input
+              className="search"
+              type="search"
+              placeholder="Search songs, composers, tags…"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+            />
+            <select value={sort} onChange={(e) => setSort(e.target.value as SortKey)} title="Sort">
+              <option value="default">Sort: default</option>
+              <option value="title">Sort: name</option>
+              <option value="level">Sort: level</option>
+              <option value="played">Sort: last played</option>
+              <option value="stars">Sort: most stars</option>
+              <option value="added">Sort: newest</option>
+            </select>
+            <select value={levelFilter} onChange={(e) => setLevelFilter(Number(e.target.value))} title="Level">
+              <option value={0}>All levels</option>
+              {[1, 2, 3, 4, 5].map((l) => (
+                <option key={l} value={l}>
+                  {LEVELS[l]}
+                </option>
+              ))}
+            </select>
+            {tags.length > 0 && (
+              <select value={tagFilter} onChange={(e) => setTagFilter(e.target.value)} title="Tag">
+                <option value="">All tags</option>
+                {tags.map((t) => (
+                  <option key={t} value={t}>
+                    #{t}
+                  </option>
+                ))}
+              </select>
+            )}
+          </div>
+          {(() => {
+            const favs = view([...mine, ...builtin]).filter((s) => metaStore[s.id]?.favorite);
+            return favs.length ? (
+              <section>
+                <div className="section-head">
+                  <h2>★ Favourites</h2>
+                </div>
+                <div className="grid">{favs.map((s) => card(s, { onDelete: mine.includes(s) ? () => onDelete(s) : undefined }))}</div>
+              </section>
+            ) : null;
+          })()}
           <section>
             <div className="section-head">
               <h2>My songs</h2>
@@ -436,7 +567,7 @@ export function Library(props: Props) {
                 yourself playing. Your songs stay in this browser.
               </div>
             ) : (
-              <div className="grid">{mine.map((s) => card(s, { onDelete: () => onDelete(s) }))}</div>
+              <div className="grid">{view(mine).map((s) => card(s, { onDelete: () => onDelete(s) }))}</div>
             )}
           </section>
 
@@ -445,10 +576,12 @@ export function Library(props: Props) {
               <h2>Library</h2>
               <span className="muted small">Public-domain pieces, arranged for practice</span>
             </div>
-            <div className="grid">{builtin.map((s) => card(s))}</div>
+            <div className="grid">{view(builtin).map((s) => card(s))}</div>
+            {filtering && !view([...mine, ...builtin]).length && <div className="empty muted">No songs match.</div>}
           </section>
         </>
       )}
+      {details && <SongDetails song={details} onClose={() => setDetails(null)} />}
     </div>
   );
 }

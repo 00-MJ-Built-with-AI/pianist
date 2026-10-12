@@ -1,6 +1,7 @@
 import type { Hand, Song } from '../music/types';
 import type { InputSource } from '../input/hub';
 import type { Judgments } from './controllers';
+import type { ScoreWeights } from '../store/settings';
 import type { ExtraNote, MeasureStat, ModeKind, PassSummary, RecordedEvent, Report, StepResult } from './types';
 
 export interface AnalysisInput {
@@ -17,6 +18,8 @@ export interface AnalysisInput {
   completed: boolean;
   source: InputSource | 'none';
   regionMeasures: [number, number];
+  /** How much notes, timing, steady tempo and dynamics count in Practice and Audition scores. */
+  weights?: ScoreWeights;
 }
 
 const median = (xs: number[]) => {
@@ -250,6 +253,16 @@ export function analyze(input: AnalysisInput): Report {
     const j = input.judgments;
     const judged = j.perfect + j.good + j.miss;
     score = judged ? (100 * (j.perfect + 0.7 * j.good)) / (judged + 0.5 * j.wrong) : 0;
+  } else if (input.weights && (input.mode === 'practice' || input.mode === 'audition')) {
+    const w = input.weights;
+    const parts: Array<[number, number]> = [
+      [w.notes, accuracy],
+      [w.timing, timingScore],
+      [w.tempo, stabilityScore],
+    ];
+    if (dynamicsRange !== null) parts.push([w.dynamics, clamp01(dynamicsRange / 40)]);
+    const total = parts.reduce((a, [wt]) => a + wt, 0);
+    score = total > 0 ? (100 * parts.reduce((a, [wt, v]) => a + wt * v, 0)) / total : 100 * accuracy;
   } else if (input.mode === 'audition') {
     const dyn = dynamicsRange === null ? 0.7 : clamp01(dynamicsRange / 40);
     score = 100 * (0.45 * accuracy + 0.2 * stabilityScore + 0.2 * timingScore + 0.15 * dyn);

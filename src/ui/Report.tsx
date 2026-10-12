@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { MODE_LABELS, type Report } from '../engine/types';
 import type { Song } from '../music/types';
 import { replayRecording } from './replay';
+import { useSettings } from '../store/settings';
 
 interface Props {
   report: Report;
@@ -11,6 +12,7 @@ interface Props {
   onAgain?: () => void;
   onNext?: () => void;
   nextTitle?: string;
+  onFix?: () => void;
 }
 
 const W = 640;
@@ -176,7 +178,9 @@ function DynamicsChart({ report, song }: { report: Report; song: Song | null }) 
   );
 }
 
-export function ReportView({ report, song, onClose, onPracticeBars, onAgain, onNext, nextTitle }: Props) {
+export function ReportView({ report, song, onClose, onPracticeBars, onAgain, onNext, nextTitle, onFix }: Props) {
+  const sections = useSettings().reportSections;
+  const hasMistakes = report.measures.some((m) => m.score !== null && m.score < 0.9);
   const [replaying, setReplaying] = useState(false);
   const stopRef = useRef<(() => void) | null>(null);
   useEffect(() => () => stopRef.current?.(), []);
@@ -288,18 +292,18 @@ export function ReportView({ report, song, onClose, onPracticeBars, onAgain, onN
           </div>
         </section>
 
-        <section className="tips">
+        {sections.tips && <section className="tips">
           <h4>Coach's notes</h4>
           <ul>
             {report.tips.map((t, i) => (
               <li key={i}>{t}</li>
             ))}
           </ul>
-        </section>
+        </section>}
 
-        <TimingChart report={report} song={song} />
-        <TempoChart report={report} song={song} />
-        <DynamicsChart report={report} song={song} />
+        {sections.timing && <TimingChart report={report} song={song} />}
+        {sections.tempo && <TempoChart report={report} song={song} />}
+        {sections.dynamics && <DynamicsChart report={report} song={song} />}
 
         {report.passes.length > 0 && (
           <section>
@@ -318,6 +322,11 @@ export function ReportView({ report, song, onClose, onPracticeBars, onAgain, onN
           {report.recording.some((e) => e.type === 'on') && (
             <button className="btn" onClick={toggleReplay}>
               {replaying ? '■ Stop replay' : '▶ Replay my performance'}
+            </button>
+          )}
+          {onFix && hasMistakes && (
+            <button className="btn" onClick={onFix} title="Loop each stretch with mistakes, slowly, then back up to tempo">
+              🎯 Fix my mistakes
             </button>
           )}
           {report.weakRange && onPracticeBars && song && (

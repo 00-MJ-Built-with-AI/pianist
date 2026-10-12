@@ -28,3 +28,33 @@ describe('practice coach', () => {
     expect(passCompletesStep(speed, pass(1, 0.9))).toBe(true);
   });
 });
+
+describe('fix my mistakes', () => {
+  it('turns weak bars into slowed-down loops', async () => {
+    const { buildFixPlan } = await import('./coach');
+    const m = (index: number, score: number | null) => ({
+      index,
+      number: index + 1,
+      expected: 4,
+      hit: 4,
+      missed: 0,
+      extra: 0,
+      hesitations: 0,
+      tempoRatio: null,
+      meanAbsDevMs: null,
+      score,
+    });
+    const report = {
+      rate: 0.8,
+      hands: ['R', 'L'],
+      measures: [m(0, 1), m(1, 0.5), m(2, 1), m(3, 0.6), m(4, 1), m(5, 1), m(6, 1), m(7, 0.3), m(8, null)],
+    } as unknown as Parameters<typeof buildFixPlan>[0];
+    const plan = buildFixPlan(report);
+    expect(plan.map((s) => s.region)).toEqual([
+      { from: 1, to: 3 },
+      { from: 7, to: 7 },
+    ]);
+    expect(plan[0]).toMatchObject({ rate: 0.6, finishAtRate: 0.8, autoSpeedUp: true, mode: 'practice' });
+    expect(plan[1].title).toBe('Bar 8: 60% → 80%');
+  });
+});

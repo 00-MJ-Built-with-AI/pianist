@@ -44,6 +44,9 @@ function handleMessage(e: MIDIMessageEvent) {
     inputHub.setPedal(data[2] >= 64, time);
   } else if (cmd === 0xb0 && (data[1] === 123 || data[1] === 120)) {
     inputHub.releaseAll('midi');
+  } else if (cmd === 0xb0) {
+    // Soft and sostenuto pedals, foot switches: usable for hands-free control.
+    inputHub.controlChange(data[1], data[2]);
   }
 }
 

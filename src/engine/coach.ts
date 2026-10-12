@@ -1,5 +1,5 @@
 import type { Hand, Song } from '../music/types';
-import type { ModeKind, PassSummary } from './types';
+import type { ModeKind, PassSummary, Report } from './types';
 
 /*
  * Practice coach: the routine a teacher would give for a hard passage — each hand alone slowly,
@@ -20,6 +20,8 @@ export interface CoachStep {
   passTarget: number;
   /** For the speed-up step: done after a clean pass at this tempo. */
   finishAtRate?: number;
+  /** Bars this step loops (otherwise the coach's passage). */
+  region?: { from: number; to: number };
 }
 
 export interface CoachOptions {
@@ -111,4 +113,37 @@ export function passCompletesStep(step: CoachStep, pass: PassSummary): boolean {
   if (pass.accuracy < step.passTarget) return false;
   if (step.finishAtRate !== undefined) return pass.rate >= step.finishAtRate - 1e-6;
   return true;
+}
+
+/**
+ * "Fix my mistakes": the stretches of bars that went wrong in a report, each looped slowly in
+ * Practice and sped back up to the tempo of the run, one after the other.
+ */
+export function buildFixPlan(report: Report, cleanPass = 0.9): CoachStep[] {
+  const bad = report.measures.filter((m) => m.score !== null && m.score < 0.9).map((m) => m.index);
+  const ranges: Array<{ from: number; to: number }> = [];
+  for (const i of bad) {
+    const last = ranges[ranges.length - 1];
+    if (last && i - last.to <= 2) last.to = i; // one good bar between two bad ones joins them
+    else ranges.push({ from: i, to: i });
+  }
+  const target = report.rate;
+  const slow = Math.max(0.4, Math.round(target * 0.75 * 20) / 20);
+  return ranges.slice(0, 4).map((r, k) => {
+    const a = report.measures.find((m) => m.index === r.from)?.number ?? r.from + 1;
+    const b = report.measures.find((m) => m.index === r.to)?.number ?? r.to + 1;
+    return {
+      id: `fix-${k}`,
+      title: `${a === b ? `Bar ${a}` : `Bars ${a}–${b}`}: ${pct(slow)} → ${pct(target)}`,
+      hint: 'Slowly first; every clean pass goes faster until you are back at your tempo.',
+      mode: 'practice',
+      hands: report.hands,
+      wait: true,
+      rate: slow,
+      autoSpeedUp: true,
+      passTarget: cleanPass,
+      finishAtRate: target,
+      region: r,
+    };
+  });
 }

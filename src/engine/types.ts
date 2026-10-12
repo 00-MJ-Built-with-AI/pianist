@@ -29,6 +29,7 @@ export interface SessionOptions {
   clicks?: { subdivision: 'beat' | 'eighth'; accent: boolean; sound: ClickSound };
   /** Softly play the player's own notes as a guide. */
   guide?: boolean;
+  weights?: import('../store/settings').ScoreWeights;
 }
 
 export type ClickSound = 'beep' | 'wood' | 'cowbell';

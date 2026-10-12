@@ -4,7 +4,8 @@ import { piano } from '../audio/piano';
 import type { KeyKind } from '../engine/controllers';
 import { Session, type Hud } from '../engine/session';
 import { MODE_LABELS, NoteMark, type ModeKind, type Report, type SessionOptions } from '../engine/types';
-import { buildCoachPlan, passCompletesStep, type CoachOptions, type CoachStep } from '../engine/coach';
+import { buildCoachPlan, buildFixPlan, passCompletesStep, type CoachOptions, type CoachStep } from '../engine/coach';
+import { celebrate, say, sfx } from './feedback';
 import { CoachDialog } from './CoachDialog';
 import { inputHub } from '../input/hub';
 import type { Hand, Song } from '../music/types';
@@ -146,9 +147,15 @@ export function Player({ song: baseSong, queue, preset, nextAction, onNavigate, 
       if (!r) return;
       setReport(r);
       setHeat(r.measures);
+      say(`Score ${r.score}. ${r.tips[0] ?? ''}`);
       try {
         await saveSession(r);
-        await updateBest(r);
+        const best = await updateBest(r);
+        // Three stars or a new personal best deserve a celebration.
+        if (r.stars === 3 || (best && best.date === r.date && r.completed)) {
+          celebrate();
+          sfx('success');
+        }
         await addPracticeTime(r.durationSec);
         onSaved?.();
       } catch (err) {
@@ -177,13 +184,19 @@ export function Player({ song: baseSong, queue, preset, nextAction, onNavigate, 
           countInBars: st.countInBars,
           clicks: { subdivision: st.clickSubdivision, accent: st.clickAccent, sound: st.clickSound },
           guide: st.guideNotes,
+          weights: st.scoreWeights,
           ...opts,
         },
         performance.now(),
       );
       let seenPasses = 0;
+      let spoken = '';
       s.subscribe(() => {
         if (s.message) setToast(s.message);
+        if (s.message && s.message !== spoken) {
+          spoken = s.message;
+          say(s.message);
+        }
         setRate(Math.round(s.rate * 100) / 100);
         // Coach: a clean pass moves on to the next step.
         const c = coachRef.current;
@@ -195,6 +208,9 @@ export function Player({ song: baseSong, queue, preset, nextAction, onNavigate, 
               setCoach(null);
               s.stop(performance.now());
               setToast('Passage learned! 🎉 Every step done.');
+              celebrate();
+              sfx('levelup');
+              say('Well done. Every step is done.');
             } else {
               const next = c.index + 1;
               window.setTimeout(() => runStepRef.current(next), 0);
@@ -241,16 +257,18 @@ export function Player({ song: baseSong, queue, preset, nextAction, onNavigate, 
     setHands({ R: step.hands.includes('R'), L: step.hands.includes('L') });
     setRate(step.rate);
     if (step.mode === 'learn' || step.mode === 'practice') setWaitBy((w) => ({ ...w, [step.mode]: step.wait }));
+    const region = step.region ?? { from: c.from, to: c.to };
     setLoopOn(true);
-    setLoop({ from: c.from, to: c.to });
+    setLoop(region);
     setToast(`Step ${index + 1} of ${c.steps.length}: ${step.title}`);
+    say(`Step ${index + 1}. ${step.title}. ${step.hint}`);
     void launch({
       mode: step.mode,
       hands: step.hands,
       otherHand: step.hands.length === 2 ? 'mute' : otherHand,
       rate: step.rate,
       metronome,
-      loop: { from: c.from, to: c.to },
+      loop: region,
       autoSpeedUp: step.autoSpeedUp,
       wait: step.wait,
     });
@@ -259,6 +277,14 @@ export function Player({ song: baseSong, queue, preset, nextAction, onNavigate, 
   const startCoach = (o: CoachOptions) => {
     setCoachDialog(false);
     coachRef.current = { steps: buildCoachPlan(song, { ...o, cleanPass: tuningOf(getSettings()).cleanPass }), index: 0, from: o.from, to: o.to };
+    runStepRef.current(0);
+  };
+
+  const startFix = (r: Report) => {
+    const steps = buildFixPlan(r, tuningOf(getSettings()).cleanPass);
+    if (!steps.length) return;
+    setReport(null);
+    coachRef.current = { steps, index: 0, from: steps[0].region!.from, to: steps[0].region!.to };
     runStepRef.current(0);
   };
 
@@ -307,6 +333,8 @@ export function Player({ song: baseSong, queue, preset, nextAction, onNavigate, 
     let raf = 0;
     let lastHud = 0;
     let lastMarks = 0;
+    let lastFlash = 0;
+    let lastCombo = 0;
     const tick = () => {
       const now = performance.now();
       const s = sessionRef.current;
@@ -332,6 +360,13 @@ export function Player({ song: baseSong, queue, preset, nextAction, onNavigate, 
         preferFlats: u.preferFlats,
       });
       scoreRef.current?.setBeat(beat);
+      if (s && s.status === 'running' && s.flashes.length) {
+        const latest = s.flashes[s.flashes.length - 1];
+        if (latest.time > lastFlash) {
+          lastFlash = latest.time;
+          if (latest.kind === 'miss' || latest.kind === 'wrong') sfx('miss');
+        }
+      }
       // Mistakes on the sheet music (hidden while performing in Audition).
       if (now - lastMarks > 250) {
         lastMarks = now;
@@ -348,7 +383,13 @@ export function Player({ song: baseSong, queue, preset, nextAction, onNavigate, 
       }
       if (s && s.status === 'running' && now - lastHud > 150) {
         lastHud = now;
-        setHud(s.hud(now));
+        const h = s.hud(now);
+        if (h.combo >= 25 && h.combo % 25 === 0 && h.combo !== lastCombo) {
+          lastCombo = h.combo;
+          sfx('combo');
+          setToast(`${h.combo} in a row!`);
+        }
+        setHud(h);
       }
       raf = requestAnimationFrame(tick);
     };
@@ -360,6 +401,29 @@ export function Player({ song: baseSong, queue, preset, nextAction, onNavigate, 
       sessionRef.current = null;
     };
   }, [song, settings.fullKeyboard]);
+
+  // Hands-free control from the piano.
+  useEffect(
+    () =>
+      inputHub.onAction((a) => {
+        const s = sessionRef.current;
+        const now = performance.now();
+        const live = s?.status === 'running';
+        if (a === 'startStop') {
+          if (live) stop();
+          else {
+            setReport(null);
+            void start();
+          }
+        } else if (a === 'restart') {
+          setReport(null);
+          void start();
+        } else if (live && a === 'nextBar') s.nextBar(now);
+        else if (live && a === 'prevBar') s.previousBar(now);
+        else if (live && a === 'skip' && s.canSkip) s.skip(now);
+      }),
+    [start, stop],
+  );
 
   // Space starts / stops, Escape stops or closes the report.
   useEffect(() => {
@@ -785,6 +849,7 @@ export function Player({ song: baseSong, queue, preset, nextAction, onNavigate, 
             setReport(null);
             void start();
           }}
+          onFix={() => startFix(report)}
           onNext={nextSong ? () => onNavigate?.(nextSong) : nextAction?.run}
           nextTitle={nextSong?.title ?? nextAction?.label}
         />

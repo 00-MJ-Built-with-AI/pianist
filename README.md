@@ -53,6 +53,24 @@ metronome with count-in, A–B bar loops (click bars in the score) with automati
   notes, key highlights, falling notes and keyboard size can be switched.
 * **Install & offline**: installable app (manifest + service worker that caches the whole app, the note-detector model
   and the piano sound after first use); touch-friendly, multi-touch on-screen keyboard for tablets.
+* **Fix my mistakes**: from any report, loop each stretch of weak bars slowly and speed back up to tempo.
+
+## Make it yours (Settings)
+
+* **Players**: separate profiles with their own progress, history, lists and settings (songs are shared).
+* **Practice**: Relaxed / Normal / Strict presets or custom timing windows, clean-pass level, speed-up step and
+  maximum; guide notes that softly play your part.
+* **Metronome**: 0–2 bar count-in, beats or eighths, accented downbeat, beep / wood block / cowbell.
+* **Sound**: concert grand, bright, mellow or electric piano; room reverb.
+* **Look**: dark, light or high-contrast theme; hand colours (incl. a colour-blind preset); falling-note speed and
+  colouring by hand, by note or by finger; glow.
+* **Sheet music**: size, and a scrolling line or whole pages that turn by themselves.
+* **Hands-free**: assign spare piano keys or the soft / middle pedal to start/stop, restart, next/previous bar, skip.
+* **Score & feedback**: how much notes, timing, steady tempo and dynamics count; which report sections show; sound
+  effects, confetti, and a spoken coach.
+* **Daily plan**: goal minutes, which items appear, and a practice reminder.
+* **Library**: search, sort, filter by level or tag, favourites, and per-song name, emoji, colour, level, tags and notes.
+* **Backup & restore**: everything for every player in one file.
 
 ## The report
 

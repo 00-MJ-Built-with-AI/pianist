@@ -126,6 +126,31 @@ describe('Practice mode (following)', () => {
     expect(r.playedBpm).toBeGreaterThan(95);
   });
 
+  it('weights the score by what the player chose to count', () => {
+    const s = song('ode-to-joy');
+    // Every note right, but bars 5-6 rushed.
+    const { c } = perform(s, ['R'], 100, (_i, beat) => ({ tempo: beat > 16 && beat <= 24 ? 1.4 : 1 }));
+    const input = {
+      song: s,
+      mode: 'practice' as const,
+      hands: ['R' as Hand],
+      rate: 1,
+      steps: c.stepResults(),
+      extras: c.extras(),
+      judgments: null,
+      passes: [],
+      recording: [],
+      durationSec: 30,
+      completed: true,
+      source: 'midi' as const,
+      regionMeasures: [0, s.measures.length - 1] as [number, number],
+    };
+    const notesOnly = analyze({ ...input, weights: { notes: 1, timing: 0, tempo: 0, dynamics: 0 } });
+    const tempoOnly = analyze({ ...input, weights: { notes: 0, timing: 0, tempo: 1, dynamics: 0 } });
+    expect(notesOnly.score).toBe(100);
+    expect(tempoOnly.score).toBeLessThan(100);
+  });
+
   it('accepts a late chord note after the cursor moved on', () => {
     const s = song('chord-basics');
     const ctx = context(s, ['R']);

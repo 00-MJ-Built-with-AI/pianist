@@ -17,9 +17,8 @@ export const TUNING_PRESETS: Record<'relaxed' | 'normal' | 'strict', Tuning> = {
   strict: { perfectMs: 45, goodMs: 110, chordWindowMs: 500, cleanPass: 0.95, speedStep: 0.05, maxRate: 1 },
 };
 
-export type ControlAction = 'startStop' | 'nextBar' | 'prevBar' | 'skip' | 'restart';
-/** A piano key (note number) or a pedal / controller number that triggers an action. */
-export type ControlTrigger = { type: 'key'; pitch: number } | { type: 'cc'; cc: number };
+import type { ControlAction, ControlTrigger } from '../input/hub';
+export type { ControlAction, ControlTrigger };
 
 export interface ScoreWeights {
   notes: number;

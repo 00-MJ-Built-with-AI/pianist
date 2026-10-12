@@ -31,6 +31,8 @@ class PianoSampler {
   private scheduled = new Set<Voice>();
   loaded = false;
   loadError: string | null = null;
+  /** The electric piano is synthesised; the other sounds use the grand-piano samples. */
+  electric = false;
 
   load(): Promise<void> {
     this.loadPromise ??= (async () => {
@@ -87,7 +89,7 @@ class PianoSampler {
     let stop: (t: number) => void;
     let kill: () => void;
 
-    const sample = this.nearest(pitch);
+    const sample = this.electric ? null : this.nearest(pitch);
     if (sample) {
       const src = ctx.createBufferSource();
       src.buffer = sample[1];
@@ -110,6 +112,46 @@ class PianoSampler {
         } catch {
           // already stopped
         }
+      };
+    } else if (this.electric) {
+      // Electric piano: FM synthesis, a bell-like attack that mellows as the note sustains.
+      const freq = 440 * Math.pow(2, (pitch - 69) / 12);
+      const carrier = ctx.createOscillator();
+      carrier.frequency.value = freq;
+      const mod = ctx.createOscillator();
+      mod.frequency.value = freq;
+      const modGain = ctx.createGain();
+      modGain.gain.setValueAtTime(freq * 2.2, when);
+      modGain.gain.setTargetAtTime(freq * 0.35, when, 0.25);
+      mod.connect(modGain).connect(carrier.frequency);
+      const tine = ctx.createOscillator();
+      tine.frequency.value = freq * 14;
+      const tineGain = ctx.createGain();
+      tineGain.gain.setValueAtTime(level * 0.12, when);
+      tineGain.gain.setTargetAtTime(0, when, 0.04);
+      tine.connect(tineGain).connect(gain);
+      carrier.connect(gain);
+      gain.gain.setValueAtTime(0, when);
+      gain.gain.linearRampToValueAtTime(level * 0.55, when + 0.004);
+      gain.gain.setTargetAtTime(level * 0.2, when + 0.01, 1.2);
+      const oscs = [carrier, mod, tine];
+      oscs.forEach((o) => o.start(when));
+      stop = (t) => {
+        gain.gain.cancelScheduledValues(t);
+        gain.gain.setTargetAtTime(0, t, 0.12);
+        oscs.forEach((o) => o.stop(t + 0.8));
+      };
+      kill = () => {
+        const now = ctx.currentTime;
+        gain.gain.cancelScheduledValues(now);
+        gain.gain.setTargetAtTime(0, now, 0.01);
+        oscs.forEach((o) => {
+          try {
+            o.stop(now + 0.1);
+          } catch {
+            // already stopped
+          }
+        });
       };
     } else {
       // Fallback tone: two detuned partials with a piano-like decay.

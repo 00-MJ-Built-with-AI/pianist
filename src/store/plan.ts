@@ -56,8 +56,14 @@ export function estimateLevel(songs: Song[], bests: Best[]): number {
   return Math.min(4, level);
 }
 
-export function buildPlan(input: { today: Date; sessions: Report[]; songs: Song[]; bests: Best[] }): PlanItem[] {
+export interface PlanOptions {
+  items?: { warmup: boolean; fix: boolean; review: boolean; new: boolean; sight: boolean };
+  maxFix?: number;
+}
+
+export function buildPlan(input: { today: Date; sessions: Report[]; songs: Song[]; bests: Best[]; options?: PlanOptions }): PlanItem[] {
   const { today, sessions, songs, bests } = input;
+  const want = input.options?.items ?? { warmup: true, fix: true, review: true, new: true, sight: true };
   const day = dayIndex(today);
   const midnight = startOfDay(today);
   const level = estimateLevel(songs, bests);
@@ -93,7 +99,7 @@ export function buildPlan(input: { today: Date; sessions: Report[]; songs: Song[
   // 2. Fix the weakest bars from recent sessions.
   const fixes = [...latest.values()]
     .filter((r) => r.weakRange && r.score < 90 && today.getTime() - r.date < 21 * DAY_MS)
-    .slice(0, 2);
+    .slice(0, input.options?.maxFix ?? 2);
   for (const r of fixes) {
     const s = byId.get(r.songId)!;
     const { from, to } = r.weakRange!;
@@ -184,5 +190,6 @@ export function buildPlan(input: { today: Date; sessions: Report[]; songs: Song[
     done: doneToday(sightId),
   });
 
-  return items;
+  // The player chooses which kinds of item the plan has.
+  return items.filter((i) => want[i.kind]);
 }
