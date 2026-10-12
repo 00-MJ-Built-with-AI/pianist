@@ -9,15 +9,22 @@ import { builtinSongs } from './music/library';
 import type { Song } from './music/types';
 import { addSongs, newCollection, withoutSong, type Collection } from './store/collections';
 import {
+  dayKey,
   deleteCollection,
   deleteSong,
   listBests,
   listCollections,
+  listDays,
+  listSessions,
   listSongs,
   saveCollection,
   saveSong,
   type Best,
+  type Day,
 } from './store/db';
+import type { Report } from './engine/types';
+import { scaleExercise, sightReading } from './music/exercises';
+import { buildPlan, type PlanItem } from './store/plan';
 import { useSettings } from './store/settings';
 import { InputBar } from './ui/InputBar';
 import { Library, type Queue } from './ui/Library';
@@ -44,15 +51,19 @@ export function App() {
   const [mine, setMine] = useState<Song[]>([]);
   const [bests, setBests] = useState<Best[]>([]);
   const [collections, setCollections] = useState<Collection[]>([]);
+  const [sessions, setSessions] = useState<Report[]>([]);
+  const [days, setDays] = useState<Day[]>([]);
   const settings = useSettings();
   const builtin = useMemo(() => builtinSongs(), []);
 
   const refresh = useCallback(async () => {
     try {
-      const [songs, b, cols] = await Promise.all([listSongs(), listBests(), listCollections()]);
+      const [songs, b, cols, hist, d] = await Promise.all([listSongs(), listBests(), listCollections(), listSessions(300), listDays()]);
       setMine(songs);
       setBests(b);
       setCollections(cols);
+      setSessions(hist);
+      setDays(d);
     } catch (err) {
       console.warn('Storage unavailable', err);
     }
@@ -117,6 +128,29 @@ export function App() {
     return { imported, errors };
   };
 
+  const plan = useMemo(
+    () => buildPlan({ today: new Date(), sessions, songs: [...builtin, ...mine], bests }),
+    [sessions, builtin, mine, bests],
+  );
+  const todaySeconds = days.find((d) => d.date === dayKey())?.seconds ?? 0;
+
+  const openPlanItem = (item: PlanItem) => {
+    const l = item.launch;
+    if (l.type === 'song') {
+      const song = [...builtin, ...mine].find((s) => s.id === l.songId);
+      if (song) setView({ name: 'play', song, preset: item.preset });
+    } else if (l.type === 'scale') {
+      setView({ name: 'play', song: scaleExercise({ ...l, beats: 1, bpm: 80 }), preset: item.preset });
+    } else {
+      setView({
+        name: 'play',
+        song: sightReading(l.level, l.bars, l.seed),
+        preset: item.preset,
+        next: () => sightReading(l.level, l.bars, Math.floor(Math.random() * 1e9)),
+      });
+    }
+  };
+
   const onCreateCollection = async (name: string, songIds: string[] = []) => {
     const c = addSongs(newCollection(name), songIds);
     await saveCollection(c);
@@ -166,6 +200,9 @@ export function App() {
             mine={mine}
             bests={bests}
             collections={collections}
+            plan={plan}
+            todaySeconds={todaySeconds}
+            onOpenPlan={openPlanItem}
             onOpen={(song, queue) => setView({ name: 'play', song, queue })}
             onImport={onImport}
             onRecord={() => setView({ name: 'record' })}

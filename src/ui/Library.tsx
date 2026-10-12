@@ -5,6 +5,8 @@ import { hasSong, moveSong, toggleSong, type Collection } from '../store/collect
 import type { Best } from '../store/db';
 import { isAudioFile } from '../music/audioFiles';
 import { loadPref, savePref } from '../store/settings';
+import type { PlanItem } from '../store/plan';
+import { TodayPlan } from './TodayPlan';
 
 export interface Queue {
   name: string;
@@ -16,6 +18,9 @@ interface Props {
   mine: Song[];
   bests: Best[];
   collections: Collection[];
+  plan: PlanItem[];
+  todaySeconds: number;
+  onOpenPlan: (item: PlanItem) => void;
   onOpen: (song: Song, queue?: Queue) => void;
   onImport: (files: File[], collection: Collection | null) => Promise<{ imported: Song[]; errors: string[] }>;
   onRecord: () => void;
@@ -409,6 +414,7 @@ export function Library(props: Props) {
         </section>
       ) : (
         <>
+          <TodayPlan items={props.plan} todaySeconds={props.todaySeconds} onOpen={props.onOpenPlan} />
           <section>
             <div className="section-head">
               <h2>My songs</h2>
