@@ -149,6 +149,8 @@ export class Stage {
   private kbSize: StageDisplay['keyboardSize'] = 'medium';
   private C: Palette = DARK;
   private fingers = new Map<number, number>();
+  /** Longest note, so drawing can start from the first note that can still be on screen. */
+  private maxDur = 0;
 
   constructor(private canvas: HTMLCanvasElement) {
     this.ctx = canvas.getContext('2d')!;
@@ -157,6 +159,8 @@ export class Stage {
   setSong(song: Song | null, fullKeyboard: boolean): void {
     this.song = song;
     this.fingers = song ? suggestFingering(song) : new Map();
+    this.maxDur = 0;
+    for (const n of song?.notes ?? []) this.maxDur = Math.max(this.maxDur, n.dur);
     if (!song || fullKeyboard || song.notes.length === 0) {
       this.setRange(21, 108);
       return;
@@ -314,7 +318,9 @@ export class Stage {
     ctx.font = '600 10px system-ui, sans-serif';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'bottom';
-    for (const n of song.notes) {
+    const notes = song.notes;
+    for (let i = this.firstNoteFrom(f.beat - this.maxDur - 0.01); i < notes.length; i++) {
+      const n = notes[i];
       if (n.start > top) break;
       if (n.start + n.dur < f.beat - 0.01) continue;
       if (n.pitch < this.lo || n.pitch > this.hi) continue;
@@ -340,15 +346,21 @@ export class Stage {
       else if (mark === NoteMark.Early || mark === NoteMark.Late) fill = C.off;
       else fill = base;
       ctx.globalAlpha = mark === NoteMark.Missed ? 0.55 : 1;
-      roundRect(ctx, x, yTop + 1, w, h, 5);
-      ctx.fillStyle = fill;
       const glowing = f.display.noteGlow && user && n.start <= f.beat + 0.05 && n.start + n.dur > f.beat;
       if (glowing) {
-        ctx.shadowColor = fill;
-        ctx.shadowBlur = 14;
+        // A soft halo (much cheaper for tablet graphics chips than a blur shadow).
+        ctx.fillStyle = fill;
+        ctx.globalAlpha = 0.22;
+        roundRect(ctx, x - 5, yTop - 4, w + 10, h + 10, 9);
+        ctx.fill();
+        ctx.globalAlpha = 0.35;
+        roundRect(ctx, x - 2.5, yTop - 1.5, w + 5, h + 5, 7);
+        ctx.fill();
+        ctx.globalAlpha = 1;
       }
+      roundRect(ctx, x, yTop + 1, w, h, 5);
+      ctx.fillStyle = fill;
       ctx.fill();
-      ctx.shadowBlur = 0;
       if (!user) {
         ctx.fillStyle = n.hand === 'R' ? C.R : C.L;
         ctx.globalAlpha = 0.6;
@@ -371,12 +383,26 @@ export class Stage {
     ctx.restore();
   }
 
+  /** Index of the first note starting at or after `beat` (notes are in time order). */
+  private firstNoteFrom(beat: number): number {
+    const notes = this.song?.notes ?? [];
+    let lo = 0;
+    let hi = notes.length;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if (notes[mid].start < beat) lo = mid + 1;
+      else hi = mid;
+    }
+    return lo;
+  }
+
   private handOfTarget(f: StageFrame, pitch: number): Hand {
     const song = this.song;
     if (!song) return 'R';
     let best: Hand = pitch >= 60 ? 'R' : 'L';
     let bestD = Infinity;
-    for (const n of song.notes) {
+    for (let i = this.firstNoteFrom(f.beat - 4); i < song.notes.length; i++) {
+      const n = song.notes[i];
       if (n.pitch !== pitch) continue;
       const d = Math.abs(n.start - f.beat);
       if (d < bestD) {

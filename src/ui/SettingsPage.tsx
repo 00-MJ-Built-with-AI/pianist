@@ -107,7 +107,7 @@ function triggerName(t: ControlTrigger | undefined): string {
 const sameTrigger = (a: ControlTrigger, b: ControlTrigger) =>
   a.type === 'key' ? b.type === 'key' && a.pitch === b.pitch : b.type === 'cc' && a.cc === b.cc;
 
-export function SettingsPage() {
+export function SettingsPage({ onCheckup }: { onCheckup?: () => void }) {
   const s = useSettings();
   const set = (patch: Partial<Settings>) => updateSettings(patch);
   const [selfTest, setSelfTest] = useState<SelfTestResult | 'running' | string | null>(null);
@@ -538,12 +538,32 @@ export function SettingsPage() {
       </Section>
 
       <Section id="timing" title="Timing & microphone">
+        {onCheckup && (
+          <div className="setting">
+            <div>
+              <b>Piano check-up</b>
+              <div className="muted small">
+                Three minutes at your piano: checks MIDI and the microphone, measures the delay, recommends settings and can save a file for
+                fine-tuning.
+              </div>
+            </div>
+            <button className="btn primary" onClick={onCheckup}>
+              Start check-up…
+            </button>
+          </div>
+        )}
+        <Toggle
+          label="I use headphones"
+          hint="Then the microphone can't hear Pianist's own sounds, so it doesn't need to filter them out, and guide notes can play while it listens."
+          checked={s.headphones}
+          onChange={(v) => set({ headphones: v })}
+        />
         <div className="setting">
           <div>
             <b>Calibrate timing</b>
             <div className="muted small">Play along with 12 clicks; Pianist measures your piano's delay and sets the correction below.</div>
           </div>
-          <button className="btn primary" onClick={() => setCalibrating(true)}>
+          <button className="btn" onClick={() => setCalibrating(true)}>
             Calibrate…
           </button>
         </div>

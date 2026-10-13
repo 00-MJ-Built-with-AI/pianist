@@ -36,6 +36,8 @@ export interface Hud {
 }
 
 
+const NO_NOTES: ReadonlySet<number> = new Set();
+
 export class Session implements SessionContext {
   readonly clock = new Clock();
   readonly region: Region;
@@ -113,6 +115,8 @@ export class Session implements SessionContext {
       }),
       inputHub.onPedal((down, time) => this.record(time, 'pedal', down ? 1 : 0, 0)),
     );
+    // The microphone listens harder for the notes the music expects at each moment.
+    if (opts.mode !== 'listen') inputHub.expectation = this.expect;
     this.startedAt = now;
     this.passStart = now;
     this.restart(now);
@@ -319,8 +323,27 @@ export class Session implements SessionContext {
     return this.report;
   }
 
+  private readonly expect = (time: number): ReadonlySet<number> => {
+    if (this.status !== 'running') return NO_NOTES;
+    const beat = this.playhead(time);
+    // Timed: notes due within a third of a second. Waiting: the current notes and the next couple of beats.
+    const before = this.timed ? 0.35 * this.targetBps : 0.5;
+    const after = this.timed ? 0.35 * this.targetBps : 2;
+    const set = new Set(this.controller.targets(time));
+    for (const n of this.userNotes) {
+      if (n.start > beat + after) break;
+      if (n.start >= beat - before) set.add(n.pitch);
+    }
+    return set;
+  };
+
+  private releaseExpectation() {
+    if (inputHub.expectation === this.expect) inputHub.expectation = null;
+  }
+
   private finish(now: number, completed: boolean) {
     this.status = 'finished';
+    this.releaseExpectation();
     this.clock.pause(now);
     piano.stopAll('accomp');
     const useLast = !completed && this.lastPass && this.controller.stepResults().every((s) => !s.played.length);
@@ -376,6 +399,7 @@ export class Session implements SessionContext {
   }
 
   dispose(): void {
+    this.releaseExpectation();
     this.unsubs.forEach((u) => u());
     this.unsubs = [];
     piano.stopAll('accomp');

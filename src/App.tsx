@@ -43,12 +43,13 @@ const Transcriber = lazy(() => import('./ui/Transcriber').then((m) => ({ default
 const Exercises = lazy(() => import('./ui/Exercises').then((m) => ({ default: m.Exercises })));
 const Editor = lazy(() => import('./ui/Editor').then((m) => ({ default: m.Editor })));
 const EarTraining = lazy(() => import('./ui/EarTraining').then((m) => ({ default: m.EarTraining })));
+const Checkup = lazy(() => import('./ui/Checkup').then((m) => ({ default: m.Checkup })));
 const loading = <div className="loading muted">Loading…</div>;
 
 type Tab = 'library' | 'exercises' | 'progress' | 'settings';
 
 type View =
-  | { name: Tab | 'record' }
+  | { name: Tab | 'record' | 'checkup' }
   | { name: 'transcribe'; file: File | null; collectionId: string | null }
   | { name: 'play'; song: Song; queue?: Queue; preset?: PlayerPreset; next?: () => Song; returnTo?: Tab }
   | { name: 'edit'; song: Song; back: View }
@@ -313,7 +314,12 @@ export function App() {
           </Suspense>
         )}
         {view.name === 'progress' && <Progress songs={[...builtin, ...mine]} />}
-        {view.name === 'settings' && <SettingsPage />}
+        {view.name === 'settings' && <SettingsPage onCheckup={() => setView({ name: 'checkup' })} />}
+        {view.name === 'checkup' && (
+          <Suspense fallback={loading}>
+            <Checkup onClose={() => setView({ name: 'settings' })} />
+          </Suspense>
+        )}
         {view.name === 'transcribe' && (
           <Suspense fallback={loading}>
             <Transcriber

@@ -44,6 +44,8 @@ export interface Settings {
   fingering: boolean; // suggested finger numbers on the sheet music
   fullKeyboard: boolean;
   micSensitivity: number; // 0–1, higher hears quieter notes
+  /** The player listens on headphones: the microphone can't hear Pianist's own sounds. */
+  headphones: boolean;
   // Practice
   strictness: 'relaxed' | 'normal' | 'strict' | 'custom';
   tuning: Tuning; // used when strictness is custom
@@ -99,6 +101,7 @@ const DEFAULTS: Settings = {
   fingering: false,
   fullKeyboard: false,
   micSensitivity: 0.5,
+  headphones: false,
   strictness: 'normal',
   tuning: { ...TUNING_PRESETS.normal },
   countInBars: 1,

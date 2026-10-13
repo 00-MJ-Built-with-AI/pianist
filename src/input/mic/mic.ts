@@ -16,8 +16,15 @@ const HOP_MS = 128;
 const EDGE_FRAMES = 9; // frames at the right edge the model can't judge yet (~100 ms)
 const MIN_PITCH = 21;
 const REFRACTORY_MS = 90;
+const RESTRIKE_MS = 150;
+const WARMUP_SEC = 0.5;
+const FRAMES_PER_SEC = Math.round(SR / FFT_HOP);
+const FLOOR_RISE = Math.pow(10, 1 / 20 / (2 * FRAMES_PER_SEC));
+/** A note must be this much louder than the room's background (6 dB) to count. */
+const NOISE_GATE = 2;
 const OFF_FRAMES = 3;
 const RECHECK_FRAMES = 4;
+const NONE: ReadonlySet<number> = new Set();
 
 export interface MicState {
   state: 'off' | 'loading' | 'on' | 'error';
@@ -94,6 +101,27 @@ class Detector {
   active = new Map<number, { since: number; low: number }>();
   lastOnset = new Map<number, number>();
   busy = false;
+  /** Loudness of the last second of frames. */
+  recentLoud = new Float32Array(FRAMES_PER_SEC);
+  recentCount = 0;
+  /**
+   * The room's background level. It follows quiet moments down at once but rises only slowly
+   * (about 1 dB every 2 s), so ringing notes don't raise it but a fan switched on is learnt in a while.
+   */
+  floor = -1;
+
+  addLoudness(rms: number) {
+    // Perfect silence is a microphone that isn't delivering yet (or is muted), not the room.
+    if (rms < 1e-7) return;
+    this.recentLoud[this.recentCount++ % FRAMES_PER_SEC] = rms;
+    const n = Math.min(this.recentCount, FRAMES_PER_SEC);
+    // Half a second of the room first; the frames where the microphone was just starting are among the quietest
+    // tenth and so don't drag the estimate down.
+    if (n < FRAMES_PER_SEC / 2) return;
+    // The quietest tenth of the last second (a single dropout frame doesn't count).
+    const quiet = this.recentLoud.slice(0, n).sort()[Math.floor(n * 0.1)];
+    this.floor = this.floor < 0 ? quiet : Math.min(quiet, this.floor * FLOOR_RISE);
+  }
 
   push(x: Float32Array) {
     if (x.length >= N_SAMPLES) {
@@ -119,6 +147,22 @@ let detector = new Detector();
 let debugSink: ((x: { time: number; pitch: number; onset: number; frame: number }) => void) | null = null;
 export function setMicDebug(sink: typeof debugSink): void {
   debugSink = sink;
+}
+
+/** Receives the microphone audio (22 050 Hz mono) as it arrives, e.g. to record the check-up. */
+let tap: ((samples: Float32Array) => void) | null = null;
+export function setMicTap(t: typeof tap): void {
+  tap = t;
+}
+/** Samples received since the microphone started. */
+export function micSampleCount(): number {
+  return detector.total;
+}
+
+/** performance.now() time at which a test buffer starts playing into the detector. */
+let testOrigin = 0;
+export function micTestOrigin(): number {
+  return testOrigin;
 }
 
 /** Maps a stream sample index to performance.now() time. */
@@ -159,8 +203,36 @@ async function analyse() {
   const onsetThresh = 0.62 - 0.3 * s;
   const frameThresh = 0.4 - 0.18 * s;
   const offThresh = frameThresh * 0.6;
+  // While a piece is being practised, the notes it expects need less evidence and anything else a little more,
+  // so soft notes and inner chord notes come through and stray overtones don't.
+  const expectation = inputHub.expectation;
+  const expOnset = Math.max(0.2, onsetThresh - 0.18);
+  const expFrame = Math.max(0.12, frameThresh - 0.12);
+  const otherOnset = expectation ? onsetThresh + 0.05 : onsetThresh;
+  const otherFrame = expectation ? frameThresh + 0.03 : frameThresh;
   const P = 88;
   const lastFrame = nFrames - 1 - EDGE_FRAMES;
+  // Loudness of every frame (without any constant offset the microphone may add).
+  let mean = 0;
+  for (let i = 0; i < N_SAMPLES; i++) mean += audio[i];
+  mean /= N_SAMPLES;
+  const loud = new Float32Array(nFrames);
+  for (let f = 0; f < nFrames; f++) {
+    let sum = 0;
+    const a = Math.max(0, f * FFT_HOP - FFT_HOP);
+    const b = Math.min(N_SAMPLES, f * FFT_HOP + 2 * FFT_HOP);
+    for (let i = a; i < b; i++) sum += (audio[i] - mean) * (audio[i] - mean);
+    loud[f] = b > a ? Math.sqrt(sum / (b - a)) : 0;
+  }
+  for (let f = 0; f <= lastFrame; f++) if (windowStart + f * FFT_HOP >= d.processedUpTo) d.addLoudness(loud[f]);
+  // Microphone hiss can look like notes to the model: whatever isn't clearly louder than the room is ignored.
+  // Until the room has been heard, nothing counts (the first half second after the microphone starts).
+  const gate = d.floor < 0 ? Infinity : d.floor * NOISE_GATE;
+  const audible = (f: number) => {
+    let m = 0;
+    for (let g = f; g <= Math.min(nFrames - 1, f + 3); g++) m = Math.max(m, loud[g]);
+    return m >= gate;
+  };
   const at = (arr: Float32Array, f: number, k: number) => arr[f * P + k];
 
   const peakOver = (arr: Float32Array, k: number, from: number, to: number) => {
@@ -168,25 +240,57 @@ async function analyse() {
     for (let g = Math.max(0, from); g <= Math.min(nFrames - 1, to); g++) m = Math.max(m, at(arr, g, k));
     return m;
   };
-  // An overtone of a note struck at the same moment sounds much weaker than the note itself;
-  // a real octave played on top is louder relative to its partner.
+  /*
+   * Overtones: a note struck at the same moment, or still ringing under the sustain pedal, makes its
+   * harmonics sound too. They are weaker than the note itself; a real note played on top is louder
+   * relative to its partner. Below C3 an octave overtone is nearly as strong as a played octave, so an
+   * expected octave gets the benefit of the doubt there.
+   */
   const OVERTONES: Array<[interval: number, maxRatio: number]> = [
     [12, 0.6],
     [19, 0.45],
     [24, 0.45],
+    [28, 0.35],
+    [31, 0.35],
   ];
-  const isOvertone = (f: number, k: number, level: number) =>
+  const isOvertone = (f: number, k: number, level: number, onset: number, expected: boolean) =>
     OVERTONES.some(([iv, ratio]) => {
       const lk = k - iv;
-      if (lk < 0 || peakOver(onsets, lk, f - 3, f + 3) < 0.45) return false;
+      if (lk < 0) return false;
+      const struckTogether = peakOver(onsets, lk, f - 3, f + 3) >= 0.45;
+      const ringing = d.active.has(lk + MIN_PITCH) && onset < 0.7;
+      if (!struckTogether && !ringing) return false;
       const lowLevel = peakOver(frames, lk, f, f + 3);
-      return lowLevel > 0 && level / lowLevel < ratio;
+      if (lowLevel <= 0) return false;
+      // Below middle C the octave overtone can even outshine its note; unexpected, it must strike harder.
+      if (!expected && expectation && iv === 12 && lk + MIN_PITCH < 60 && struckTogether && onset <= peakOver(onsets, lk, f - 3, f + 3)) return true;
+      // Not expected while practising: an octave over a struck note must be clearly louder than it to count.
+      const strict = iv === 12 ? 1.2 : ratio * 2;
+      const limit = expected ? (iv === 12 && lk + MIN_PITCH < 48 ? 0 : ratio * 0.75) : expectation ? strict : ratio;
+      return level / lowLevel < limit;
     });
+
+  const emit = (pitch: number, time: number, o: number, level: number) => {
+    d.lastOnset.set(pitch, time);
+    if (d.active.has(pitch)) inputHub.noteOff(pitch, time, 'mic');
+    d.active.set(pitch, { since: time, low: 0 });
+    const velocity = Math.round(Math.max(20, Math.min(120, 30 + o * 70 + level * 20)));
+    inputHub.noteOn({ pitch, velocity, time, source: 'mic' });
+  };
+  // The same key again: a note that is still sounding needs a clear gap before it counts as struck again
+  // (otherwise one long low note can be heard twice as the model's view of it shifts between windows).
+  const recent = (pitch: number, time: number) => {
+    const prev = d.lastOnset.get(pitch);
+    return prev !== undefined && Math.abs(time - prev) < (d.active.has(pitch) || pitch < 48 ? RESTRIKE_MS : REFRACTORY_MS);
+  };
+  const appSound = (pitch: number, time: number) => !settings.headphones && isAppSound(pitch, time);
 
   for (let f = 1; f <= lastFrame; f++) {
     const sample = windowStart + f * FFT_HOP;
     // Frames near the previous window's edge are checked again: the model sees them better with more context.
     if (sample < d.processedUpTo - RECHECK_FRAMES * FFT_HOP || sample < 0) continue;
+    // The first moments after the microphone starts are a jump from silence: nothing to hear yet.
+    if (sample < SR * WARMUP_SEC) continue;
     const fresh = sample >= d.processedUpTo;
     const time = perfOfSample(sample) - settings.micLatency;
     if (debugSink && fresh) {
@@ -195,23 +299,38 @@ async function analyse() {
         if (o > 0.15) debugSink({ time, pitch: k + MIN_PITCH, onset: o, frame: at(frames, f, k) });
       }
     }
+    const expected = expectation ? expectation(time) : NONE;
 
     // Onsets: local peaks of the onset curve with the note actually sounding.
+    let struck = false;
     for (let k = 0; k < P; k++) {
-      const o = at(onsets, f, k);
-      if (o < onsetThresh) continue;
-      if (o < at(onsets, f - 1, k) || o < at(onsets, f + 1, k)) continue;
-      const level = peakOver(frames, k, f, f + 3);
-      if (level < frameThresh || isOvertone(f, k, level)) continue;
       const pitch = k + MIN_PITCH;
-      const prev = d.lastOnset.get(pitch);
-      if (prev !== undefined && Math.abs(time - prev) < REFRACTORY_MS) continue;
-      if (isAppSound(pitch, time)) continue;
-      d.lastOnset.set(pitch, time);
-      if (d.active.has(pitch)) inputHub.noteOff(pitch, time, 'mic');
-      d.active.set(pitch, { since: time, low: 0 });
-      const velocity = Math.round(Math.max(20, Math.min(120, 30 + o * 70 + level * 20)));
-      inputHub.noteOn({ pitch, velocity, time, source: 'mic' });
+      const exp = expected.has(pitch);
+      const o = at(onsets, f, k);
+      if (o < (exp ? expOnset : otherOnset) || !audible(f)) continue;
+      if (o < peakOver(onsets, k, f - 2, f - 1) || o < peakOver(onsets, k, f + 1, f + 2)) continue;
+      // The model's view of an attack can swell a little before the real one: wait for the stronger peak.
+      if (o < 0.6 * peakOver(onsets, k, f + 3, f + 8)) continue;
+      const level = peakOver(frames, k, f, f + 3);
+      if (level < (exp ? expFrame : otherFrame) || isOvertone(f, k, level, o, exp)) continue;
+      // A note that is still ringing only counts again when it really got louder (struck again).
+      if (d.active.has(pitch) && o < 0.75 && level < 1.15 * peakOver(frames, k, f - 5, f - 2)) continue;
+      if (recent(pitch, time) || appSound(pitch, time)) continue;
+      emit(pitch, time, o, level);
+      struck = true;
+    }
+    // Chords: an expected note that starts sounding with the others counts even when its own onset is faint.
+    if (struck && expected.size && audible(f)) {
+      for (const pitch of expected) {
+        const k = pitch - MIN_PITCH;
+        if (k < 0 || k >= P || d.active.has(pitch) || recent(pitch, time)) continue;
+        const before = peakOver(frames, k, f - 6, f - 2);
+        const after = peakOver(frames, k, f, f + 4);
+        const o = peakOver(onsets, k, f - 2, f + 2);
+        if (after < expFrame || after < before * 1.5 + 0.05 || o < 0.12) continue;
+        if (isOvertone(f, k, after, o, true) || appSound(pitch, time)) continue;
+        emit(pitch, time, o, after);
+      }
     }
     if (!fresh) continue;
     // Releases: the note's frame activation stays low for a few frames.
@@ -261,6 +380,7 @@ export async function startMic(opts: MicOptions = {}): Promise<void> {
       src.buffer = opts.testBuffer;
       src.connect(ctx.destination);
       src.start(ctx.currentTime + 0.05);
+      testOrigin = performance.now() + 50;
       source = src;
     } else {
       source = ctx.createMediaStreamSource(stream!);
@@ -275,6 +395,7 @@ export async function startMic(opts: MicOptions = {}): Promise<void> {
     node.port.onmessage = (e: MessageEvent<{ samples: Float32Array; endFrame: number }>) => {
       const out = resampler.push(e.data.samples);
       detector.push(out);
+      tap?.(out);
       // The last sample in this block was captured (endFrame - now) ago, plus the device's input latency.
       const lagSec = ctx.currentTime - e.data.endFrame / ctx.sampleRate;
       clockRef = { sample: detector.total, perf: performance.now() - Math.max(0, lagSec) * 1000 - inputLatency };

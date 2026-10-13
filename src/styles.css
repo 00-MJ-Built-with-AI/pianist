@@ -2290,3 +2290,135 @@ button,
     scroll-margin-top: calc(var(--header-h, 58px) + 100px);
   }
 }
+
+/* ---------- piano check-up */
+
+.checkup {
+  max-width: 820px;
+  margin: 0 auto;
+}
+
+.checkup-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+
+.checkup-head h1 {
+  font-size: 22px;
+  margin: 0;
+  flex: 1;
+}
+
+.checkup-progress {
+  margin-bottom: 14px;
+}
+
+.checkup-card {
+  background: var(--bg2);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 18px 20px;
+}
+
+.checkup-card h2 {
+  margin: 4px 0 8px;
+  font-size: 18px;
+}
+
+.checkup-card h2:not(:first-child) {
+  margin-top: 22px;
+}
+
+.checkup-text {
+  font-size: 17px;
+  line-height: 1.45;
+}
+
+.checkup-keys {
+  display: block;
+  width: 100%;
+  height: 130px;
+  margin: 14px 0;
+  border-radius: 10px;
+}
+
+.checkup-heard {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  min-height: 28px;
+}
+
+.checkup-heard .tag.ok {
+  background: rgba(56, 201, 138, 0.2);
+  color: var(--text);
+}
+
+.checkup-heard .tag.off {
+  background: rgba(255, 184, 77, 0.2);
+  color: var(--text);
+}
+
+.checkup-ok {
+  color: var(--good, #38c98a);
+  font-size: 20px;
+  margin-left: 6px;
+}
+
+.small-btn {
+  margin-left: 8px;
+  padding: 2px 8px;
+  font-size: 12px;
+}
+
+.findings {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.findings li {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+}
+
+.finding-icon {
+  flex: none;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  font-size: 12px;
+  font-weight: 700;
+  color: #0d0f14;
+  margin-top: 1px;
+}
+
+.findings .good .finding-icon {
+  background: #38c98a;
+}
+
+.findings .info .finding-icon {
+  background: #4c9dff;
+}
+
+.findings .warn .finding-icon {
+  background: #ffb84d;
+}
+
+.findings .bad .finding-icon {
+  background: #ff5d6c;
+}
+
+.checkup-changes {
+  margin: 0 0 12px;
+  padding-left: 20px;
+}

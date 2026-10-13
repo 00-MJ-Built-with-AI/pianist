@@ -28,6 +28,11 @@ class InputHub {
   echoMidi = false;
   /** Milliseconds subtracted from MIDI timestamps to compensate for device latency. */
   midiLatency = 0;
+  /**
+   * The pitches the music expects around a moment (performance.now() ms), set by a running practice
+   * session. The microphone detector hears these more readily; anything else needs clearer evidence.
+   */
+  expectation: ((time: number) => ReadonlySet<number>) | null = null;
 
   /* ---- hands-free control: piano keys or pedals that act as buttons */
   private controls = new Map<string, ControlAction>();
@@ -35,6 +40,13 @@ class InputHub {
   private learner: ((t: ControlTrigger) => void) | null = null;
   private swallowed = new Set<number>(); // control keys held down (their release is ignored)
   private ccDown = new Set<number>();
+  private ccListeners = new Set<(cc: number, value: number) => void>();
+
+  /** Every pedal / controller message other than the sustain pedal (for the check-up). */
+  onCC(l: (cc: number, value: number) => void): () => void {
+    this.ccListeners.add(l);
+    return () => this.ccListeners.delete(l);
+  }
 
   setControls(map: Partial<Record<ControlAction, ControlTrigger>>): void {
     this.controls.clear();
@@ -62,6 +74,7 @@ class InputHub {
 
   /** A pedal or controller from the piano (other than the sustain pedal). */
   controlChange(cc: number, value: number): void {
+    this.ccListeners.forEach((l) => l(cc, value));
     const down = value >= 64;
     if (!down) {
       this.ccDown.delete(cc);

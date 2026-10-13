@@ -7,6 +7,7 @@ import { MODE_LABELS, NoteMark, type ModeKind, type Report, type SessionOptions 
 import { buildCoachPlan, buildFixPlan, passCompletesStep, type CoachOptions, type CoachStep } from '../engine/coach';
 import { celebrate, say, sfx } from './feedback';
 import { CoachDialog } from './CoachDialog';
+import { micState } from '../input/mic/mic';
 import { inputHub } from '../input/hub';
 import type { Hand, Song } from '../music/types';
 import { addPracticeTime, saveSession, updateBest } from '../store/db';
@@ -183,7 +184,8 @@ export function Player({ song: baseSong, queue, preset, nextAction, onNavigate, 
           tuning: tuningOf(st),
           countInBars: st.countInBars,
           clicks: { subdivision: st.clickSubdivision, accent: st.clickAccent, sound: st.clickSound },
-          guide: st.guideNotes,
+          // Through speakers the microphone would hear the guide notes as the player's own.
+          guide: st.guideNotes && (micState().state !== 'on' || st.headphones),
           weights: st.scoreWeights,
           ...opts,
         },
@@ -328,13 +330,19 @@ export function Player({ song: baseSong, queue, preset, nextAction, onNavigate, 
     stageRef.current = stage;
     stage.setSong(song, settings.fullKeyboard);
     stage.resize();
-    const ro = new ResizeObserver(() => stage.resize());
+    // Redraw only when something changed: an idle player costs nothing (tablets keep their battery).
+    let drawn = { ui: null as unknown, held: '', beat: NaN, w: 0, h: 0 };
+    const ro = new ResizeObserver(() => {
+      stage.resize(); // clears the canvas
+      drawn.w = -1;
+    });
     ro.observe(canvas);
     let raf = 0;
     let lastHud = 0;
     let lastMarks = 0;
     let lastFlash = 0;
     let lastCombo = 0;
+    let lastHudSig = '';
     const tick = () => {
       const now = performance.now();
       const s = sessionRef.current;
@@ -343,7 +351,11 @@ export function Player({ song: baseSong, queue, preset, nextAction, onNavigate, 
       const beat = s ? s.playhead(now) : u.idleBeat;
       const held = new Map<number, KeyKind>();
       for (const p of inputHub.held.keys()) held.set(p, s?.status === 'running' ? (s.keyKinds.get(p) ?? 'neutral') : 'neutral');
-      stage.draw({
+      const heldSig = [...held].join();
+      const busy = s?.status === 'running' || (s?.flashes.some((fl) => now - fl.time < 1000) ?? false);
+      if (busy || drawn.ui !== u || drawn.held !== heldSig || drawn.beat !== beat || drawn.w !== canvas.width || drawn.h !== canvas.height) {
+        drawn = { ui: u, held: heldSig, beat, w: canvas.width, h: canvas.height };
+        stage.draw({
         beat,
         now,
         bps: (song.bpm * u.rate) / 60,
@@ -358,7 +370,8 @@ export function Player({ song: baseSong, queue, preset, nextAction, onNavigate, 
         hideCues: u.hideCues,
         display: u.display,
         preferFlats: u.preferFlats,
-      });
+        });
+      }
       scoreRef.current?.setBeat(beat);
       if (s && s.status === 'running' && s.flashes.length) {
         const latest = s.flashes[s.flashes.length - 1];
@@ -389,7 +402,11 @@ export function Player({ song: baseSong, queue, preset, nextAction, onNavigate, 
           sfx('combo');
           setToast(`${h.combo} in a row!`);
         }
-        setHud(h);
+        const sig = `${h.accuracy}|${h.combo}|${h.perfect}|${h.good}|${h.miss}|${h.wrong}|${h.pass}|${h.rate}|${h.message}|${h.waiting}`;
+        if (sig !== lastHudSig) {
+          lastHudSig = sig;
+          setHud(h);
+        }
       }
       raf = requestAnimationFrame(tick);
     };

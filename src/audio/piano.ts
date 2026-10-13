@@ -14,6 +14,45 @@ function sampleList(): Array<{ pitch: number; file: string }> {
   return list;
 }
 
+/** Runs `fn` over `items`, at most `n` at a time, in order of the list. */
+async function inPool<T>(items: T[], n: number, fn: (item: T) => Promise<void>): Promise<void> {
+  let next = 0;
+  const worker = async () => {
+    while (next < items.length) await fn(items[next++]);
+  };
+  await Promise.all(Array.from({ length: Math.min(n, items.length) }, worker));
+}
+
+/**
+ * The recorded samples are stereo and ring for up to 25 seconds, which takes ~160 MB once decoded.
+ * Mono and only as long as a held note can usefully sound (low strings ring longest) is ~25 MB.
+ */
+function compactSample(ctx: BaseAudioContext, buf: AudioBuffer, pitch: number): AudioBuffer {
+  const maxSec = pitch < 48 ? 12 : pitch < 72 ? 8 : 5;
+  const len = Math.min(buf.length, Math.round(maxSec * buf.sampleRate));
+  const out = ctx.createBuffer(1, len, buf.sampleRate);
+  const o = out.getChannelData(0);
+  const chs = Array.from({ length: buf.numberOfChannels }, (_, c) => buf.getChannelData(c));
+  let stereoEnergy = 0;
+  let monoEnergy = 0;
+  for (let i = 0; i < len; i++) {
+    let sum = 0;
+    for (const ch of chs) {
+      sum += ch[i];
+      stereoEnergy += ch[i] * ch[i];
+    }
+    o[i] = sum / chs.length;
+    monoEnergy += o[i] * o[i];
+  }
+  // The two microphones don't line up exactly, so the mix is quieter than either one: level it back up.
+  const lift = Math.min(1.5, Math.sqrt(stereoEnergy / chs.length / Math.max(1e-9, monoEnergy)));
+  for (let i = 0; i < len; i++) o[i] *= lift;
+  // Fade out the end so a cut-short note doesn't click.
+  const fade = Math.min(len, Math.round(0.6 * buf.sampleRate));
+  for (let i = 0; i < fade; i++) o[len - fade + i] *= 1 - (i + 1) / fade;
+  return out;
+}
+
 interface Voice {
   pitch: number;
   stop: (when: number) => void;
@@ -34,22 +73,44 @@ class PianoSampler {
   /** The electric piano is synthesised; the other sounds use the grand-piano samples. */
   electric = false;
 
+  private allPromise: Promise<void> | null = null;
+
+  /**
+   * Downloads the piano sound. Resolves once the middle of the keyboard is ready so playing can start;
+   * the lowest and highest notes keep arriving in the background (until then their neighbours are used).
+   */
   load(): Promise<void> {
     this.loadPromise ??= (async () => {
       const ctx = audioCtx();
-      const results = await Promise.allSettled(
-        sampleList().map(async ({ pitch, file }) => {
+      const list = sampleList().sort((a, b) => Math.abs(a.pitch - 64) - Math.abs(b.pitch - 64));
+      let failed = 0;
+      const fetchOne = async ({ pitch, file }: { pitch: number; file: string }) => {
+        try {
           const res = await fetch(`${SAMPLE_BASE}${file}.mp3`);
           if (!res.ok) throw new Error(`HTTP ${res.status}`);
           const buf = await ctx.decodeAudioData(await res.arrayBuffer());
-          this.buffers.set(pitch, buf);
-        }),
-      );
-      const failed = results.filter((r) => r.status === 'rejected').length;
-      if (failed === results.length) this.loadError = 'Piano samples could not be downloaded; using a synth tone.';
+          this.buffers.set(pitch, compactSample(ctx, buf, pitch));
+        } catch {
+          failed++;
+        }
+      };
+      const core = list.filter((x) => x.pitch >= 45 && x.pitch <= 84);
+      const rest = list.filter((x) => !core.includes(x));
+      await inPool(core, 4, fetchOne);
+      this.allPromise = inPool(rest, 2, fetchOne).then(() => {
+        if (failed === list.length) this.loadError = 'Piano samples could not be downloaded; using a synth tone.';
+        this.loaded = this.buffers.size > 0;
+      });
+      if (!this.buffers.size) await this.allPromise;
       this.loaded = this.buffers.size > 0;
     })();
     return this.loadPromise;
+  }
+
+  /** Waits for every sample, the extremes included (for offline rendering). */
+  async loadAll(): Promise<void> {
+    await this.load();
+    await this.allPromise;
   }
 
   private nearest(pitch: number): [number, AudioBuffer] | null {

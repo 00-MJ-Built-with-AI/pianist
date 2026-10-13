@@ -54,6 +54,9 @@ metronome with count-in, A–B bar loops (click bars in the score) with automati
 * **Install & offline**: installable app (manifest + service worker that caches the whole app, the note-detector model
   and the piano sound after first use); touch-friendly, multi-touch on-screen keyboard for tablets.
 * **Fix my mistakes**: from any report, loop each stretch of weak bars slowly and speed back up to tempo.
+* **Light on tablets**: the piano sound is kept in mono and trimmed (~45 MB instead of ~160 MB once decoded) and
+  the middle octaves load first; the keyboard and falling notes are only redrawn when something changes; the
+  glow is drawn without blur shadows; the score counter only re-renders when its numbers change.
 
 ## Make it yours (Settings)
 
@@ -102,6 +105,24 @@ browser's IndexedDB. Nothing leaves your computer.
   through the model; new onsets become key presses stamped with the time they actually sounded, so timing judgments
   stay accurate despite ~0.25 s of detection delay. Overtones are filtered, and notes the app itself plays
   (accompaniment, metronome) are ignored. Settings → *Check the microphone detector* runs a self-test.
+  * **Listening with the score**: while a piece is practised, the notes it expects at each moment need less
+    evidence (soft notes, inner chord notes) and anything else needs more (stray overtones); wrong notes are still
+    heard. Expected chord notes that start with the others count even when their own onset is faint.
+  * **Noise gate**: the model is level-independent, so it can "hear" notes in microphone hiss. A note only counts
+    when it is clearly (6 dB) louder than the room's background level, which follows quiet moments down at once
+    and rises by at most ~1 dB every 2 s, so ringing notes don't raise it.
+  * **Sustain and repeats**: harmonics of strings still ringing under the pedal aren't taken for new notes, a
+    sounding note needs a real new strike to count again, and early swells in the model's output wait for the
+    real attack (keeps chord timing within a few ms).
+  * **Headphones** (Settings → Timing & microphone): turns off the filtering of the app's own sounds and lets guide
+    notes play while the microphone listens (through speakers they'd be heard as the player's notes).
+  * `src/input/mic/bench.ts` (development only) renders piano clips — soft, far away, chords, pedal ring, repeats,
+    reverb, room noise, hiss, missed and wrong notes — feeds them to the detector and scores what it heard.
+* **Piano check-up** (Settings → Timing & microphone): a guided ~3-minute test on the player's piano — MIDI key
+  range, soft/loud range (catches fixed-velocity keyboards), chord spread, pedals and delay; microphone room noise,
+  single notes, low/high, chords, soft notes, pedal ring, fast repeats and delay. It explains what it found,
+  recommends latency and sensitivity settings, and saves a JSON file (optionally with a WAV recording of the
+  microphone steps) for fine-tuning (`src/engine/checkup.ts`, `src/ui/Checkup.tsx`).
 
 ## Code map
 
