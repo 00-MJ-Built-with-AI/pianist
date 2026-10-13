@@ -3,7 +3,26 @@ import { audioCtx, resumeAudio } from '../audio/audio';
 import { piano } from '../audio/piano';
 import type { KeyKind } from '../engine/controllers';
 import { inputHub } from '../input/hub';
-import { checkAnswer, EAR_LEVELS, groupPresses, makeQuestion, nextLevel, seededRng, type EarKind, type EarQuestion, type EarResult } from '../music/ear';
+import {
+  checkAnswer,
+  customItems,
+  DEFAULT_CUSTOM_EAR,
+  EAR_LEVELS,
+  groupPresses,
+  itemName,
+  makeCustomQuestion,
+  makeQuestion,
+  nextLevel,
+  seededRng,
+  weakSpots,
+  type CustomEar,
+  type CustomQuestion,
+  type EarKind,
+  type EarQuestion,
+  type EarResult,
+  type EarStats,
+} from '../music/ear';
+import { EarCustomSetup } from './EarCustomSetup';
 import { addPracticeTime } from '../store/db';
 import { loadPref, savePref, useSettings } from '../store/settings';
 import { Stage } from './stage';
@@ -29,9 +48,22 @@ const freshStats = (): Stats => ({ level: 1, streak: 0, misses: 0, right: 0, tot
 
 type Phase = 'idle' | 'playing' | 'listening' | 'result';
 
-export function EarTraining({ initialKind, onExit }: { initialKind: EarKind; onExit: () => void }) {
+export function EarTraining({ initialKind, onExit }: { initialKind: EarKind | 'custom'; onExit: () => void }) {
   const settings = useSettings();
-  const [kind, setKind] = useState<EarKind>(initialKind);
+  const [kind, setKind] = useState<EarKind | 'custom'>(initialKind);
+  // Your own drill: what it asks, stats per item (weak spots), and the current round.
+  const [custom, setCustomState] = useState<CustomEar>(() => ({ ...DEFAULT_CUSTOM_EAR, ...loadPref<Partial<CustomEar>>('earCustom', {}) }));
+  const [cstats, setCstats] = useState<EarStats>(() => loadPref<EarStats>('earCustomStats', {}));
+  const [round, setRound] = useState({ asked: 0, right: 0 });
+  const [setupOpen, setSetupOpen] = useState(false);
+  const isCustom = kind === 'custom';
+  const byName = isCustom && custom.answer === 'name' && custom.what !== 'melodies';
+  const roundOver = isCustom && custom.round > 0 && round.asked >= custom.round;
+  const setCustom = (c: CustomEar) => {
+    setCustomState(c);
+    savePref('earCustom', c);
+    setRound({ asked: 0, right: 0 });
+  };
   const [allStats, setAllStats] = useState<Record<EarKind, Stats>>(() => ({
     notes: freshStats(),
     intervals: freshStats(),
@@ -51,9 +83,10 @@ export function EarTraining({ initialKind, onExit }: { initialKind: EarKind; onE
   const rng = useRef(seededRng(Date.now()));
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const view = useRef({ q, phase, result, played, revealed });
+  const byNameRef = useRef(false);
   view.current = { q, phase, result, played, revealed };
   if (import.meta.env.DEV) Object.assign(window, { __pianistEar: view });
-  const stats = allStats[kind];
+  const stats = allStats[isCustom ? 'notes' : kind];
 
   // Time spent here counts as practice.
   useEffect(() => {
@@ -71,6 +104,18 @@ export function EarTraining({ initialKind, onExit }: { initialKind: EarKind; onE
     timers.current = [];
   };
 
+  /** Your own drill: count the answer for its item and for the round. */
+  const recordCustom = useCallback((q: EarQuestion, correct: boolean) => {
+    const item = (q as CustomQuestion).item;
+    setCstats((st) => {
+      const prev = st[item] ?? { asked: 0, right: 0 };
+      const next = { ...st, [item]: { asked: prev.asked + 1, right: prev.right + (correct ? 1 : 0) } };
+      savePref('earCustomStats', next);
+      return next;
+    });
+    setRound((r) => ({ asked: r.asked + 1, right: r.right + (correct ? 1 : 0) }));
+  }, []);
+
   const finish = useCallback(() => {
     const cur = view.current;
     if (!cur.q || cur.phase !== 'listening') return;
@@ -81,6 +126,10 @@ export function EarTraining({ initialKind, onExit }: { initialKind: EarKind; onE
     setPhase('result');
     sfx(r.correct ? 'success' : 'miss');
     say(r.correct ? 'Right!' : 'Not quite.');
+    if (kind === 'custom') {
+      recordCustom(cur.q, r.correct);
+      return;
+    }
     setAllStats((all) => {
       const s = { ...all[kind] };
       s.total++;
@@ -108,11 +157,26 @@ export function EarTraining({ initialKind, onExit }: { initialKind: EarKind; onE
       savePref('ear', next);
       return next;
     });
-  }, [anyOctave, kind]);
+  }, [anyOctave, kind, recordCustom]);
+
+  /** Answer by choosing the name. */
+  const answerName = (choice: string) => {
+    const cur = view.current;
+    if (!cur.q || (cur.phase !== 'listening' && cur.phase !== 'playing')) return;
+    clearTimers();
+    const correct = choice === (cur.q as CustomQuestion).choice;
+    setResult({ correct, groups: [] });
+    setPlayed([]);
+    setRevealed(true);
+    setPhase('result');
+    sfx(correct ? 'success' : 'miss');
+    say(correct ? 'Right!' : `It was ${(cur.q as CustomQuestion).choice}.`);
+    recordCustom(cur.q, correct);
+  };
 
   // Listen for the answer.
   useEffect(() => {
-    if (phase !== 'listening' || !q) return;
+    if (phase !== 'listening' || !q || byName) return;
     presses.current = [];
     const expected = q.answer.flat().length;
     const isChord = q.answer.some((g) => g.length > 1);
@@ -128,7 +192,7 @@ export function EarTraining({ initialKind, onExit }: { initialKind: EarKind; onE
       off();
       window.clearTimeout(doneTimer);
     };
-  }, [phase, q, finish]);
+  }, [phase, q, finish, byName]);
 
   const play = useCallback(async (question: EarQuestion) => {
     clearTimers();
@@ -163,11 +227,12 @@ export function EarTraining({ initialKind, onExit }: { initialKind: EarKind; onE
   }, []);
 
   const next = useCallback(() => {
-    const question = makeQuestion(kind, allStats[kind].level, rng.current);
+    if (kind === 'custom' && custom.round > 0 && round.asked >= custom.round) return;
+    const question = kind === 'custom' ? makeCustomQuestion(custom, rng.current, cstats) : makeQuestion(kind, allStats[kind].level, rng.current);
     setQ(question);
     setMessage(null);
     void play(question);
-  }, [kind, allStats, play]);
+  }, [kind, allStats, play, custom, cstats, round]);
 
   useEffect(() => () => clearTimers(), []);
 
@@ -206,7 +271,7 @@ export function EarTraining({ initialKind, onExit }: { initialKind: EarKind; onE
         if (!v.result?.correct || v.revealed) targets = v.q.answer.flat();
       } else {
         for (const p of inputHub.held.keys()) held.set(p, 'neutral');
-        if (v.q?.hint !== undefined && v.phase === 'listening') targets = [v.q.hint];
+        if (v.q?.hint !== undefined && v.phase === 'listening' && !byNameRef.current) targets = [v.q.hint];
       }
       stage.draw({
         beat: 0,
@@ -233,7 +298,10 @@ export function EarTraining({ initialKind, onExit }: { initialKind: EarKind; onE
     };
   }, [anyOctave, settings]);
 
+  byNameRef.current = byName;
   const pct = stats.total ? Math.round((stats.right / stats.total) * 100) : 0;
+  const items = isCustom ? customItems(custom) : [];
+  const weak = isCustom ? weakSpots(cstats, items) : [];
 
   return (
     <div className="ear">
@@ -260,15 +328,78 @@ export function EarTraining({ initialKind, onExit }: { initialKind: EarKind; onE
             {label} <span className="count">L{allStats[k].level}</span>
           </button>
         ))}
+        <button
+          className={`shelf-chip ${isCustom ? 'active' : ''}`}
+          onClick={() => {
+            clearTimers();
+            setKind('custom');
+            setQ(null);
+            setPhase('idle');
+            setResult(null);
+            setMessage(null);
+            setRound({ asked: 0, right: 0 });
+          }}
+        >
+          ⚙ Your own
+        </button>
       </nav>
 
       <section className="ex-card ear-card">
-        <div className="ear-info">
+        {isCustom && (
+          <div className="ear-custom">
+            <div className="ear-info">
+              <div>
+                <b>Your own drill</b>
+                <div className="muted small">
+                  {items.length} thing{items.length === 1 ? '' : 's'} to recognise ·{' '}
+                  {custom.what === 'melodies' ? 'play it back' : custom.answer === 'name' ? 'choose the name' : 'play it back'}
+                  {custom.round ? ` · rounds of ${custom.round}` : ' · endless'}
+                </div>
+              </div>
+              <div className="ear-stats">
+                {custom.round > 0 && (
+                  <span>
+                    Question <b>{Math.min(round.asked + (phase === 'result' ? 0 : 1), custom.round)}</b> of {custom.round}
+                  </span>
+                )}
+                <span>
+                  Right <b>{round.right}</b> of {round.asked}
+                </span>
+                <button className={`btn ${setupOpen ? 'toggle on' : ''}`} onClick={() => setSetupOpen(!setupOpen)}>
+                  ⚙ Set up
+                </button>
+              </div>
+            </div>
+            {(setupOpen || (phase === 'idle' && round.asked === 0)) && <EarCustomSetup value={custom} onChange={setCustom} />}
+            {weak.length > 0 && (
+              <div className="weak-spots small">
+                <span className="muted">Missed most:</span>
+                {weak.map((w) => (
+                  <span key={w.item} className="tag">
+                    {itemName(w.item)} · {Math.round(w.rate * 100)}%
+                  </span>
+                ))}
+                <span className="muted">(asked more often)</span>
+              </div>
+            )}
+            {roundOver && (
+              <div className="round-done">
+                <b>
+                  Round done: {round.right} of {round.asked} right ({Math.round((round.right / Math.max(1, round.asked)) * 100)}%)
+                </b>
+                <button className="btn primary" onClick={() => setRound({ asked: 0, right: 0 })}>
+                  New round
+                </button>
+              </div>
+            )}
+          </div>
+        )}
+        <div className="ear-info" hidden={isCustom}>
           <div>
             <b>
-              Level {stats.level}: {EAR_LEVELS[kind][stats.level - 1]}
+              Level {stats.level}: {EAR_LEVELS[isCustom ? 'notes' : kind][stats.level - 1]}
             </b>
-            <div className="muted small">{KINDS.find(([k]) => k === kind)![2]} Three right in a row moves you up a level.</div>
+            <div className="muted small">{KINDS.find(([k]) => k === kind)?.[2]} Three right in a row moves you up a level.</div>
           </div>
           <div className="ear-stats">
             <span>
@@ -286,10 +417,19 @@ export function EarTraining({ initialKind, onExit }: { initialKind: EarKind; onE
         <div className="ear-status">
           {phase === 'idle' && <span>Press Play (or Space) to hear the first one.</span>}
           {phase === 'playing' && <span>Listen…</span>}
-          {phase === 'listening' && (
+          {phase === 'listening' && !byName && (
             <span>
               Your turn: play it on the piano{q?.hint !== undefined ? ', starting on the highlighted key' : ''}.
             </span>
+          )}
+          {(phase === 'listening' || phase === 'playing') && byName && q && (
+            <div className="name-choices">
+              {(q as CustomQuestion).choices.map((c) => (
+                <button key={c} className="btn" onClick={() => answerName(c)}>
+                  {c}
+                </button>
+              ))}
+            </div>
           )}
           {phase === 'result' && result && (
             <span className={result.correct ? 'ok' : 'bad'}>
@@ -301,7 +441,7 @@ export function EarTraining({ initialKind, onExit }: { initialKind: EarKind; onE
 
         <div className="rec-controls">
           {phase === 'idle' || phase === 'result' ? (
-            <button className="btn primary" onClick={next}>
+            <button className="btn primary" onClick={next} disabled={roundOver}>
               {phase === 'idle' ? '▶ Play' : 'Next ▶'}
             </button>
           ) : (
@@ -314,7 +454,7 @@ export function EarTraining({ initialKind, onExit }: { initialKind: EarKind; onE
               ↻ Try again
             </button>
           )}
-          {phase === 'listening' && (
+          {phase === 'listening' && !byName && (
             <button className="btn" onClick={finish}>
               Check
             </button>

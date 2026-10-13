@@ -67,7 +67,19 @@ metronome with count-in, A–B bar loops (click bars in the score) with automati
 * **Timing calibration**: play along with 12 clicks and Pianist measures and corrects your piano's delay.
 * **Practice coach**: pick a passage; it walks you through right hand → left hand → together slowly → up to tempo →
   a keep-going run, moving on after each clean pass.
+* **Your own coach routines**: build routines step by step (hands, waits / own pace / keep going, start and target
+  tempo, clean passes needed, bars at a time, dotted or reverse-dotted rhythm), or start from ready-made ones
+  (hands separately, slow → fast, chunks of 2 bars then join, rhythm variations, listen → learn → from memory).
+  Special steps: *Listen first*, *From memory* (no sheet, no falling notes) and *Eyes on the sheet* (no falling
+  notes or key lights). A routine can be attached to a piece so its Coach button starts it straight away.
 * **Ear training**: notes, intervals, chords and melodies; the app plays, you play it back; adaptive levels.
+  **Your own drill**: choose exactly which intervals (up / down / together), chord types and inversions, notes in a
+  key or melodies, the note range, answer by playing or by choosing the name, rounds of 10–20, and the items you
+  miss most come up more often (shown as weak spots).
+* **Your own exercises**: a pattern builder (scale degrees such as 1-2-3-4-5-4-3-2 moved up the scale and back
+  down, mirrored, through any keys), chord drills (types, inversions, block or broken, through keys), and scales
+  in rhythms (dotted, reverse dotted, swing, triplets, accents in 3s / 4s; swing and triplets are written in 12/8).
+  Saved exercises marked *warm-up* take turns as the daily warm-up.
 * **On the sheet music**: missed / early / late notes and wrong notes are marked on the score, and suggested
   fingering can be shown (a small optimiser using thumb-under, span and black-key rules).
 * **Moving around**: jump a bar back or forward while playing (or click a bar), skip a note you're stuck on, start
@@ -121,6 +133,8 @@ your own pulse, a tempo curve, a dynamics chart (MIDI only), and a replay of you
   ("Everything", "Melody + bass", "Melody only") can be changed instantly without re-running the model. Solo piano
   recordings work best (on rendered piano audio: ~98 % of notes found, tempo exact); full band mixes come out rough.
 * **Collections**: group songs into ordered lists, import files straight into a list, and practise a list in order.
+* **Transcriber presets**: ready-made settings (solo piano, song with singing → melody, lead sheet, beginner),
+  your own named presets, the last settings remembered, and several files at once into a new or existing collection.
 
 Progress (best stars per mode, daily streak, minutes, session history with reports and replays) is stored in the
 browser's IndexedDB. Nothing leaves your computer.

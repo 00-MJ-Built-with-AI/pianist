@@ -92,6 +92,22 @@ export function dropOvertones(notes: HeardNote[], ratio = 0.6): HeardNote[] {
 
 export type Simplify = 'all' | 'melody-bass' | 'melody';
 
+/** Where the beats fall at a chosen tempo: the detected phase, or realigned when the tempo was changed. */
+export function phaseAt(heard: HeardNote[], beat: BeatGrid, bpm: number): number {
+  if (!heard.length) return 0;
+  if (Math.abs(bpm - beat.bpm) < 0.01) return beat.phase;
+  const period = 60 / bpm;
+  let c = 0;
+  let s = 0;
+  for (const n of heard) {
+    const a = (2 * Math.PI * n.start) / period;
+    c += Math.sqrt(n.amplitude) * Math.cos(a);
+    s += Math.sqrt(n.amplitude) * Math.sin(a);
+  }
+  const p = (Math.atan2(s, c) / (2 * Math.PI)) * period;
+  return p < 0 ? p + period : p;
+}
+
 export interface ArrangeOptions {
   title: string;
   bpm: number;

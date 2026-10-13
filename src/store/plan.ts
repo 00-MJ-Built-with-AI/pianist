@@ -1,5 +1,5 @@
 import type { ModeKind, Report } from '../engine/types';
-import { TONICS, type HandsOption, type ScaleKind } from '../music/exercises';
+import { describeSpec, TONICS, type HandsOption, type SavedExercise, type ScaleKind } from '../music/exercises';
 import type { Hand, Song } from '../music/types';
 import type { Best } from './db';
 
@@ -11,7 +11,8 @@ import type { Best } from './db';
 export type PlanLaunch =
   | { type: 'song'; songId: string }
   | { type: 'scale'; pc: number; kind: ScaleKind; octaves: 1 | 2; hands: HandsOption }
-  | { type: 'sight'; level: number; bars: 4 | 8; seed: number };
+  | { type: 'sight'; level: number; bars: 4 | 8; seed: number }
+  | { type: 'custom'; id: string };
 
 export interface PlanItem {
   key: string;
@@ -59,6 +60,8 @@ export function estimateLevel(songs: Song[], bests: Best[]): number {
 export interface PlanOptions {
   items?: { warmup: boolean; fix: boolean; review: boolean; new: boolean; sight: boolean };
   maxFix?: number;
+  /** The player's own exercises marked as warm-ups: they take turns, one a day. */
+  warmups?: SavedExercise[];
 }
 
 export function buildPlan(input: { today: Date; sessions: Report[]; songs: Song[]; bests: Best[]; options?: PlanOptions }): PlanItem[] {
@@ -77,7 +80,21 @@ export function buildPlan(input: { today: Date; sessions: Report[]; songs: Song[
   const hands: HandsOption = level === 1 ? (day % 2 === 0 ? 'R' : 'L') : 'both';
   const octaves: 1 | 2 = level >= 3 ? 2 : 1;
   const warmId = scalePlanId(tonic.pc, kind, octaves, hands);
-  items.push({
+  const own = (input.options?.warmups ?? []).filter((x) => x.warmup);
+  const mine = own.length ? own[((day % own.length) + own.length) % own.length] : null;
+  if (mine) {
+    items.push({
+      key: 'warmup',
+      kind: 'warmup',
+      title: `Warm-up: ${mine.name}`,
+      detail: `${describeSpec(mine.spec)} · Learn`,
+      minutes: 3,
+      songId: `ex-custom-${mine.id}`,
+      launch: { type: 'custom', id: mine.id },
+      preset: { mode: 'learn' },
+      done: doneToday(`ex-custom-${mine.id}`),
+    });
+  } else items.push({
     key: 'warmup',
     kind: 'warmup',
     title: `Warm-up: ${kind === 'major' ? tonic.major : tonic.minor} ${kind === 'major' ? 'major' : 'harmonic minor'} scale`,

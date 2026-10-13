@@ -1,4 +1,5 @@
 import { songToMusicXml } from './musicxml';
+import { isCompound, rhythmTimes, RHYTHM_LABEL, type ExerciseRhythm } from './rhythm';
 import { finalizeSong, measureLength } from './song';
 import type { Hand, Note, Song } from './types';
 
@@ -83,9 +84,25 @@ function build(
   return song;
 }
 
-/** Places a run of pitches one after another, holding the last note to the end of its bar. */
-function run(pitches: number[], beats: number, hand: Hand, barLen: number, spellOf?: (p: number, i: number) => Raw['spell']): Raw[] {
-  const notes: Raw[] = pitches.map((pitch, i) => ({ pitch, start: i * beats, dur: beats, hand, velocity: 72, spell: spellOf?.(pitch, i) }));
+/** Places a run of pitches one after another (in a rhythm), holding the last note to the end of its bar. */
+function run(
+  pitches: number[],
+  beats: number,
+  hand: Hand,
+  barLen: number,
+  spellOf?: (p: number, i: number) => Raw['spell'],
+  rhythm: ExerciseRhythm = 'straight',
+  offset = 0,
+): Raw[] {
+  const times = rhythmTimes(pitches.length, beats, rhythm);
+  const notes: Raw[] = pitches.map((pitch, i) => ({
+    pitch,
+    start: offset + times[i].start,
+    dur: times[i].dur,
+    hand,
+    velocity: times[i].velocity,
+    spell: spellOf?.(pitch, i),
+  }));
   const last = notes[notes.length - 1];
   const end = last.start + last.dur;
   const barEnd = Math.ceil(end / barLen - 1e-9) * barLen;
@@ -93,12 +110,28 @@ function run(pitches: number[], beats: number, hand: Hand, barLen: number, spell
   return notes;
 }
 
-function withHands(rh: number[], beats: number, hands: HandsOption, barLen: number, spellOf?: (p: number, i: number) => Raw['spell']): Raw[] {
+function withHands(
+  rh: number[],
+  beats: number,
+  hands: HandsOption,
+  barLen: number,
+  spellOf?: (p: number, i: number) => Raw['spell'],
+  rhythm: ExerciseRhythm = 'straight',
+  offset = 0,
+): Raw[] {
   const notes: Raw[] = [];
-  if (hands !== 'L') notes.push(...run(rh, beats, 'R', barLen, spellOf));
-  if (hands !== 'R') notes.push(...run(rh.map((p) => p - 12), beats, 'L', barLen, spellOf));
+  if (hands !== 'L') notes.push(...run(rh, beats, 'R', barLen, spellOf, rhythm, offset));
+  if (hands !== 'R') notes.push(...run(rh.map((p) => p - 12), beats, 'L', barLen, spellOf, rhythm, offset));
   return notes;
 }
+
+/** Time signature, bar length and written tempo for a rhythm (swing and triplets are written in 12/8). */
+function meterFor(rhythm: ExerciseRhythm, bpm: number): { timeSig: [number, number]; barLen: number; bpm: number } {
+  return isCompound(rhythm) ? { timeSig: [12, 8], barLen: 6, bpm: Math.round(bpm * 1.5) } : { timeSig: [4, 4], barLen: 4, bpm };
+}
+
+const rhythmSuffix = (r: ExerciseRhythm | undefined) => (r && r !== 'straight' ? ` · ${RHYTHM_LABEL[r].toLowerCase()}` : '');
+const rhythmId = (r: ExerciseRhythm | undefined) => (r && r !== 'straight' ? `-${r}` : '');
 
 export interface ScaleOptions {
   pc: number;
@@ -107,6 +140,7 @@ export interface ScaleOptions {
   hands: HandsOption;
   beats: 1 | 0.5; // per note
   bpm: number;
+  rhythm?: ExerciseRhythm;
 }
 
 export function scaleExercise(o: ScaleOptions): Song {
@@ -119,15 +153,16 @@ export function scaleExercise(o: ScaleOptions): Song {
   // The raised seventh of harmonic minor is written with a sharp (or natural), never as a flat.
   const spellOf = (_p: number, i: number) => (o.kind === 'harmonic-minor' && degrees[i] % 7 === 6 ? ('sharp' as const) : undefined);
   const name = `${tonicName(o.pc, minor)} ${KIND_LABEL[o.kind]} Scale`;
+  const m = meterFor(o.rhythm ?? 'straight', o.bpm);
   return build(
-    `ex-scale-${o.pc}-${o.kind}-${o.octaves}-${o.hands}-${o.beats}`,
+    `ex-scale-${o.pc}-${o.kind}-${o.octaves}-${o.hands}-${o.beats}${rhythmId(o.rhythm)}`,
     name,
-    `Exercise · ${o.octaves} octave${o.octaves > 1 ? 's' : ''} · ${HANDS_LABEL[o.hands]}`,
+    `Exercise · ${o.octaves} octave${o.octaves > 1 ? 's' : ''} · ${HANDS_LABEL[o.hands]}${rhythmSuffix(o.rhythm)}`,
     o.octaves === 1 ? 1 : 2,
-    o.bpm,
-    [4, 4],
+    m.bpm,
+    m.timeSig,
     minor ? minorFifths(o.pc) : majorFifths(o.pc),
-    withHands(pitches, o.beats, o.hands, 4, spellOf),
+    withHands(pitches, o.beats, o.hands, m.barLen, spellOf, o.rhythm),
   );
 }
 
@@ -138,6 +173,7 @@ export interface ArpeggioOptions {
   hands: HandsOption;
   beats: 1 | 0.5;
   bpm: number;
+  rhythm?: ExerciseRhythm;
 }
 
 export function arpeggioExercise(o: ArpeggioOptions): Song {
@@ -147,15 +183,16 @@ export function arpeggioExercise(o: ArpeggioOptions): Song {
   for (let oct = 0; oct < o.octaves; oct++) for (const t of tones) up.push(60 + o.pc + 12 * oct + t);
   up.push(60 + o.pc + 12 * o.octaves);
   const pitches = [...up, ...up.slice(0, -1).reverse()];
+  const m = meterFor(o.rhythm ?? 'straight', o.bpm);
   return build(
-    `ex-arp-${o.pc}-${o.quality}-${o.octaves}-${o.hands}-${o.beats}`,
+    `ex-arp-${o.pc}-${o.quality}-${o.octaves}-${o.hands}-${o.beats}${rhythmId(o.rhythm)}`,
     `${tonicName(o.pc, minor)} ${minor ? 'Minor' : 'Major'} Arpeggio`,
-    `Exercise · ${o.octaves} octave${o.octaves > 1 ? 's' : ''} · ${HANDS_LABEL[o.hands]}`,
+    `Exercise · ${o.octaves} octave${o.octaves > 1 ? 's' : ''} · ${HANDS_LABEL[o.hands]}${rhythmSuffix(o.rhythm)}`,
     2,
-    o.bpm,
-    [4, 4],
+    m.bpm,
+    m.timeSig,
     minor ? minorFifths(o.pc) : majorFifths(o.pc),
-    withHands(pitches, o.beats, o.hands, 4),
+    withHands(pitches, o.beats, o.hands, m.barLen, undefined, o.rhythm),
   );
 }
 
@@ -385,4 +422,174 @@ export function sightReading(level: number, bars: 4 | 8, seed: number): Song {
     majorFifths(pc),
     notes,
   );
+}
+
+/* ------------------------------------------------------------------ your own exercises */
+
+/** A pattern of scale degrees moved up the scale (and back down, mirrored, Hanon-style) in one or more keys. */
+export interface PatternSpec {
+  type: 'pattern';
+  pattern: number[]; // scale degrees, 1 = the tonic, 8 = an octave up
+  keys: number[]; // tonic pitch classes, one after another
+  minor: boolean;
+  climb: number; // scale steps the pattern moves up (7 = an octave)
+  mirror: boolean; // come back down
+  hands: HandsOption;
+  beats: 1 | 0.5 | 0.25;
+  rhythm: ExerciseRhythm;
+  bpm: number;
+}
+
+export type ChordType = 'maj' | 'min' | 'dim' | 'aug' | 'dom7' | 'maj7' | 'min7';
+
+export const CHORD_TYPES: Record<ChordType, { label: string; tones: number[] }> = {
+  maj: { label: 'major', tones: [0, 4, 7] },
+  min: { label: 'minor', tones: [0, 3, 7] },
+  dim: { label: 'diminished', tones: [0, 3, 6] },
+  aug: { label: 'augmented', tones: [0, 4, 8] },
+  dom7: { label: 'dominant 7th', tones: [0, 4, 7, 10] },
+  maj7: { label: 'major 7th', tones: [0, 4, 7, 11] },
+  min7: { label: 'minor 7th', tones: [0, 3, 7, 10] },
+};
+
+/** Chord types and inversions, block or broken, through a set of keys. */
+export interface ChordSpec {
+  type: 'chords';
+  chords: ChordType[];
+  inversions: number[]; // 0 = root position, 1, 2, 3 (7ths only)
+  style: 'block' | 'broken';
+  keys: number[];
+  hands: HandsOption; // the right hand plays the chords, the left the roots (or the left plays the chords alone)
+  rhythm: ExerciseRhythm; // broken chords only
+  bpm: number;
+}
+
+export interface ScaleSpec {
+  type: 'scale';
+  pc: number;
+  kind: ScaleKind;
+  octaves: 1 | 2;
+  hands: HandsOption;
+  beats: 1 | 0.5;
+  rhythm: ExerciseRhythm;
+  bpm: number;
+}
+
+export type ExerciseSpec = PatternSpec | ChordSpec | ScaleSpec;
+
+export interface SavedExercise {
+  id: string;
+  name: string;
+  spec: ExerciseSpec;
+  /** Today's plan may pick it for the warm-up. */
+  warmup: boolean;
+}
+
+/** "1 2 3 4 5 4 3 2", "1-2-3-4-5" or "12345432" → scale degrees (1–15). */
+export function parsePattern(text: string): number[] | null {
+  const t = text.trim();
+  if (!t) return null;
+  const parts = /[\s,\-]/.test(t) ? t.split(/[\s,\-]+/).filter(Boolean) : [...t];
+  const degs = parts.map(Number);
+  if (degs.length < 2 || degs.length > 24 || degs.some((d) => !Number.isInteger(d) || d < 1 || d > 15)) return null;
+  return degs;
+}
+
+const KEY_NAMES = (keys: number[], minor: boolean) => keys.map((k) => tonicName(k, minor)).join(', ');
+
+/** Bars of `barLen` needed to hold `beats`. */
+const barsFor = (beats: number, barLen: number) => Math.max(1, Math.ceil(beats / barLen - 1e-9));
+
+export function patternExercise(o: PatternSpec, id = 'ex-pattern'): Song {
+  const steps = STEPS[o.minor ? 'natural-minor' : 'major'];
+  const pmin = Math.min(...o.pattern);
+  const pmax = Math.max(...o.pattern);
+  const m = meterFor(o.rhythm, o.bpm);
+  const notes: Raw[] = [];
+  let offset = 0;
+  for (const pc of o.keys) {
+    // Keep it in a comfortable range: keys above F# start an octave lower.
+    const tonic = 60 + pc - (pc > 5 ? 12 : 0);
+    const degrees: number[] = [];
+    for (let r = 0; r <= o.climb; r++) for (const d of o.pattern) degrees.push(d - 1 + r);
+    if (o.mirror) for (let r = o.climb; r >= 0; r--) for (const d of o.pattern) degrees.push(pmax + pmin - d - 1 + r);
+    degrees.push(0); // home on the tonic
+    const pitches = degrees.map((d) => degreePitch(tonic, steps, d));
+    const segment = withHands(pitches, o.beats, o.hands, m.barLen, undefined, o.rhythm, offset);
+    notes.push(...segment);
+    const end = Math.max(...segment.map((n) => n.start + n.dur));
+    offset += barsFor(end - offset, m.barLen) * m.barLen;
+  }
+  const single = o.keys.length === 1;
+  return build(
+    id,
+    `Pattern ${o.pattern.join('-')} in ${KEY_NAMES(o.keys, o.minor)}${o.minor ? ' minor' : ''}`,
+    `Your exercise · ${HANDS_LABEL[o.hands]}${o.mirror ? ' · up and down' : ''}${rhythmSuffix(o.rhythm)}`,
+    2,
+    m.bpm,
+    m.timeSig,
+    single ? (o.minor ? minorFifths(o.keys[0]) : majorFifths(o.keys[0])) : 0,
+    notes,
+  );
+}
+
+export function chordDrill(o: ChordSpec, id = 'ex-chords'): Song {
+  const m = meterFor(o.style === 'broken' ? o.rhythm : 'straight', o.bpm);
+  const notes: Raw[] = [];
+  let offset = 0;
+  const half = m.barLen / 2;
+  for (const pc of o.keys) {
+    const root = 60 + pc - (pc > 6 ? 12 : 0);
+    for (const type of o.chords) {
+      const base = CHORD_TYPES[type].tones;
+      for (const inv of o.inversions) {
+        if (inv >= base.length) continue;
+        let tones = base.map((t) => root + t);
+        for (let i = 0; i < inv; i++) tones = [...tones.slice(1), tones[0] + 12];
+        const chordHand: Hand = o.hands === 'L' ? 'L' : 'R';
+        const shift = o.hands === 'L' ? -12 : 0;
+        let length: number;
+        if (o.style === 'block') {
+          for (const p of tones) notes.push({ pitch: p + shift, start: offset, dur: half, hand: chordHand, velocity: 72 });
+          length = half;
+        } else {
+          const times = rhythmTimes(tones.length + 1, 0.5, o.rhythm);
+          const seq = [...tones, tones[0] + 12];
+          seq.forEach((p, i) => notes.push({ pitch: p + shift, start: offset + times[i].start, dur: times[i].dur, hand: chordHand, velocity: times[i].velocity }));
+          length = Math.max(half, Math.ceil((times[times.length - 1].start + times[times.length - 1].dur) / half - 1e-9) * half);
+        }
+        if (o.hands === 'both') notes.push({ pitch: root - 12 - (root >= 60 ? 12 : 0), start: offset, dur: length, hand: 'L', velocity: 64 });
+        offset += length;
+      }
+    }
+  }
+  // End on a full bar.
+  const types = o.chords.map((c) => CHORD_TYPES[c].label).join(', ');
+  const invs = o.inversions.map((i) => (i === 0 ? 'root' : `${i}${i === 1 ? 'st' : i === 2 ? 'nd' : 'rd'}`)).join(', ');
+  const song = build(
+    id,
+    `Chords: ${types}`,
+    `Your exercise · ${invs} · ${KEY_NAMES(o.keys, false)} · ${o.style}${o.style === 'broken' ? rhythmSuffix(o.rhythm) : ''}`,
+    2,
+    m.bpm,
+    m.timeSig,
+    o.keys.length === 1 ? majorFifths(o.keys[0]) : 0,
+    notes,
+  );
+  return song;
+}
+
+/** Builds a saved exercise (its id ties practice results to it). */
+export function buildExercise(spec: ExerciseSpec, id: string): Song {
+  if (spec.type === 'pattern') return patternExercise(spec, `ex-custom-${id}`);
+  if (spec.type === 'chords') return chordDrill(spec, `ex-custom-${id}`);
+  const song = scaleExercise(spec);
+  return { ...song, id: `ex-custom-${id}` };
+}
+
+export function describeSpec(spec: ExerciseSpec): string {
+  if (spec.type === 'pattern') return `${spec.pattern.join('-')} · ${KEY_NAMES(spec.keys, spec.minor)} · ${HANDS_LABEL[spec.hands]}${rhythmSuffix(spec.rhythm)}`;
+  if (spec.type === 'chords')
+    return `${spec.chords.map((c) => CHORD_TYPES[c].label).join(', ')} · ${KEY_NAMES(spec.keys, false)} · ${spec.style}${spec.style === 'broken' ? rhythmSuffix(spec.rhythm) : ''}`;
+  return `${tonicName(spec.pc, spec.kind !== 'major')} ${KIND_LABEL[spec.kind].toLowerCase()} scale · ${HANDS_LABEL[spec.hands]}${rhythmSuffix(spec.rhythm)}`;
 }

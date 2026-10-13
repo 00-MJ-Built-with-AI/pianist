@@ -2,7 +2,18 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { analyseAudio, decodeAudioFile, extractNotes, type ModelOutput } from '../ai/transcribeAudio';
 import { isAudioFile } from '../music/audioFiles';
 import { pitchName } from '../music/pitch';
-import { arrangeSong, estimateBeat, type BeatGrid, type HeardNote, type Simplify } from '../music/transcribe';
+import { arrangeSong, estimateBeat, phaseAt, type BeatGrid, type HeardNote, type Simplify } from '../music/transcribe';
+import {
+  BUILTIN_TX_PRESETS,
+  lastTxSettings,
+  myTxPresets,
+  rememberTxSettings,
+  saveMyTxPresets,
+  sameTx,
+  type TxPreset,
+  type TxSettings,
+} from './transcriberPresets';
+import { TranscribeBatch } from './TranscribeBatch';
 import type { Song } from '../music/types';
 import type { Collection } from '../store/collections';
 import { ScoreView, type ScoreHandle } from './ScoreView';
@@ -14,6 +25,8 @@ interface Props {
   collections: Collection[];
   onCancel: () => void;
   onSaved: (song: Song, collection: Collection | null) => void;
+  /** Several files transcribed at once. */
+  onSavedMany: (songs: Song[], collection: Collection | null, newCollection: string | null) => void;
 }
 
 const AUDIO_ACCEPT = 'audio/*,.mp3,.wav,.m4a,.aac,.ogg,.oga,.flac,.webm';
@@ -26,21 +39,47 @@ const TIMES: Array<[string, [number, number]]> = [
 
 type Stage = 'idle' | 'decoding' | 'loading-model' | 'analysing' | 'ready' | 'error';
 
-export function Transcriber({ initialFile, defaultCollectionId, collections, onCancel, onSaved }: Props) {
+export function Transcriber({ initialFile, defaultCollectionId, collections, onCancel, onSaved, onSavedMany }: Props) {
+  // New files start with the settings used last time.
+  const [initial] = useState(lastTxSettings);
   const [file, setFile] = useState<File | null>(null);
   const [audioUrl, setAudioUrl] = useState<string | null>(null);
   const [stage, setStage] = useState<Stage>('idle');
   const [progress, setProgress] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [output, setOutput] = useState<ModelOutput | null>(null);
-  const [detail, setDetail] = useState(0.5);
+  const [detail, setDetail] = useState(initial.detail);
   const [heard, setHeard] = useState<HeardNote[]>([]);
   const [beat, setBeat] = useState<BeatGrid | null>(null);
   const [bpm, setBpm] = useState(100);
-  const [time, setTime] = useState('4/4');
-  const [split, setSplit] = useState(60);
-  const [grid, setGrid] = useState(4);
-  const [simplify, setSimplify] = useState<Simplify>('all');
+  const [time, setTime] = useState(initial.time);
+  const [split, setSplit] = useState(initial.split);
+  const [grid, setGrid] = useState(initial.grid);
+  const [simplify, setSimplify] = useState<Simplify>(initial.simplify);
+  const [tempo, setTempo] = useState<TxSettings['tempo']>(initial.tempo);
+  const [presets, setPresets] = useState<TxPreset[]>(myTxPresets);
+  const [presetName, setPresetName] = useState('');
+  const [batch, setBatch] = useState<File[] | null>(null);
+  const current: TxSettings = { detail, time, split, grid, simplify, tempo };
+  useEffect(() => rememberTxSettings({ detail, time, split, grid, simplify, tempo }), [detail, time, split, grid, simplify, tempo]);
+  const applyPreset = (s: TxSettings) => {
+    setDetail(s.detail);
+    setTime(s.time);
+    setSplit(s.split);
+    setGrid(s.grid);
+    setSimplify(s.simplify);
+    if (beat && s.tempo !== tempo) setBpm(Math.round(beat.bpm * s.tempo * 10) / 10);
+    setTempo(s.tempo);
+  };
+  const activePreset = [...BUILTIN_TX_PRESETS, ...presets].find((p) => sameTx(p.settings, current))?.name ?? '';
+  const startMany = (list: FileList | File[]) => {
+    const files = [...list].filter(isAudioFile);
+    if (files.length > 1) {
+      stopPreview();
+      setBatch(files);
+    } else if (files[0]) void start(files[0]);
+    else if (list.length) void start([...list][0]);
+  };
   const [title, setTitle] = useState('');
   const [target, setTarget] = useState<string>(defaultCollectionId ?? '');
   const [dragging, setDragging] = useState(false);
@@ -104,7 +143,7 @@ export function Transcriber({ initialFile, defaultCollectionId, collections, onC
         beatFor.current = output;
         const g = estimateBeat(notes);
         setBeat(g);
-        setBpm(g.bpm);
+        setBpm(Math.round(g.bpm * tempo * 10) / 10);
       }
     });
     return () => {
@@ -113,20 +152,7 @@ export function Transcriber({ initialFile, defaultCollectionId, collections, onC
   }, [output, detail]);
 
   // The phase must follow tempo edits: realign the beat comb to the chosen bpm.
-  const phase = useMemo(() => {
-    if (!beat || !heard.length) return 0;
-    if (Math.abs(bpm - beat.bpm) < 0.01) return beat.phase;
-    const period = 60 / bpm;
-    let c = 0;
-    let s = 0;
-    for (const n of heard) {
-      const a = (2 * Math.PI * n.start) / period;
-      c += Math.sqrt(n.amplitude) * Math.cos(a);
-      s += Math.sqrt(n.amplitude) * Math.sin(a);
-    }
-    const p = (Math.atan2(s, c) / (2 * Math.PI)) * period;
-    return p < 0 ? p + period : p;
-  }, [beat, bpm, heard]);
+  const phase = useMemo(() => (beat && heard.length ? phaseAt(heard, beat, bpm) : 0), [beat, bpm, heard]);
 
   const song = useMemo(() => {
     if (!heard.length || !beat) return null;
@@ -166,8 +192,7 @@ export function Transcriber({ initialFile, defaultCollectionId, collections, onC
       onDrop={(e) => {
         e.preventDefault();
         setDragging(false);
-        const f = e.dataTransfer.files[0];
-        if (f) void start(f);
+        startMany(e.dataTransfer.files);
       }}
     >
       <div className="section-head">
@@ -185,19 +210,86 @@ export function Transcriber({ initialFile, defaultCollectionId, collections, onC
         ref={fileRef}
         type="file"
         accept={AUDIO_ACCEPT}
+        multiple
         hidden
         onChange={(e) => {
-          const f = e.target.files?.[0];
+          const files = e.target.files ? [...e.target.files] : [];
           e.target.value = '';
-          if (f) void start(f);
+          startMany(files);
         }}
       />
 
-      {!file ? (
+      <div className="tx-presets">
+        <label>
+          Preset{' '}
+          <select
+            value={activePreset}
+            onChange={(e) => {
+              const p = [...BUILTIN_TX_PRESETS, ...presets].find((x) => x.name === e.target.value);
+              if (p) applyPreset(p.settings);
+            }}
+          >
+            <option value="">{activePreset ? '' : 'Your own settings'}</option>
+            <optgroup label="Ready-made">
+              {BUILTIN_TX_PRESETS.map((p) => (
+                <option key={p.name} value={p.name}>
+                  {p.name}
+                </option>
+              ))}
+            </optgroup>
+            {presets.length > 0 && (
+              <optgroup label="Mine">
+                {presets.map((p) => (
+                  <option key={p.name} value={p.name}>
+                    {p.name}
+                  </option>
+                ))}
+              </optgroup>
+            )}
+          </select>
+        </label>
+        {presets.some((p) => p.name === activePreset) && (
+          <button
+            className="btn ghost"
+            onClick={() => {
+              const next = presets.filter((p) => p.name !== activePreset);
+              setPresets(next);
+              saveMyTxPresets(next);
+            }}
+          >
+            Delete preset
+          </button>
+        )}
+        <span className="spacer" />
+        <input className="name-field" placeholder="Save these settings as…" value={presetName} onChange={(e) => setPresetName(e.target.value)} maxLength={40} />
+        <button
+          className="btn"
+          disabled={!presetName.trim()}
+          onClick={() => {
+            const name = presetName.trim();
+            const next = [...presets.filter((p) => p.name !== name), { name, settings: current }];
+            setPresets(next);
+            saveMyTxPresets(next);
+            setPresetName('');
+          }}
+        >
+          Save preset
+        </button>
+      </div>
+
+      {batch ? (
+        <TranscribeBatch
+          files={batch}
+          settings={current}
+          collections={collections}
+          onSave={onSavedMany}
+          onCancel={() => setBatch(null)}
+        />
+      ) : !file ? (
         <button className="dropzone" onClick={() => fileRef.current?.click()}>
           <span className="big">♫</span>
-          <b>Choose an audio file</b>
-          <span className="muted small">or drop it here · MP3, WAV, M4A, OGG, FLAC · up to 10 minutes</span>
+          <b>Choose audio files</b>
+          <span className="muted small">or drop them here · MP3, WAV, M4A, OGG, FLAC · up to 10 minutes each · several at once go into a collection</span>
         </button>
       ) : (
         <div className="audio-row">
@@ -221,7 +313,7 @@ export function Transcriber({ initialFile, defaultCollectionId, collections, onC
       )}
       {stage === 'error' && error && <div className="error">{error}</div>}
 
-      {stage === 'ready' && (
+      {!batch && stage === 'ready' && (
         <>
           <div className="form">
             <label>
@@ -232,10 +324,24 @@ export function Transcriber({ initialFile, defaultCollectionId, collections, onC
               Tempo (bpm)
               <span className="tempo-edit">
                 <input type="number" min={30} max={260} value={bpm} onChange={(e) => setBpm(Number(e.target.value) || bpm)} />
-                <button className="btn" onClick={() => setBpm(Math.round((bpm / 2) * 10) / 10)} title="Half as fast">
+                <button
+                  className="btn"
+                  onClick={() => {
+                    setBpm(Math.round((bpm / 2) * 10) / 10);
+                    setTempo((t) => (t === 2 ? 1 : 0.5));
+                  }}
+                  title="Half as fast"
+                >
                   ÷2
                 </button>
-                <button className="btn" onClick={() => setBpm(Math.round(bpm * 2 * 10) / 10)} title="Twice as fast">
+                <button
+                  className="btn"
+                  onClick={() => {
+                    setBpm(Math.round(bpm * 2 * 10) / 10);
+                    setTempo((t) => (t === 0.5 ? 1 : 2));
+                  }}
+                  title="Twice as fast"
+                >
                   ×2
                 </button>
               </span>

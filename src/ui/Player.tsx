@@ -4,9 +4,10 @@ import { metronomeClick, piano } from '../audio/piano';
 import type { KeyKind } from '../engine/controllers';
 import { Session, type Hud } from '../engine/session';
 import { MODE_LABELS, NoteMark, type ModeKind, type Report, type SessionOptions } from '../engine/types';
-import { buildCoachPlan, buildFixPlan, passCompletesStep, type CoachOptions, type CoachStep } from '../engine/coach';
+import { buildFixPlan, ROUTINE_TEMPLATES, routineToSteps, stepDone, type CoachOptions, type CoachStep, type Routine } from '../engine/coach';
+import { applyVariant, type Variant } from '../music/rhythm';
 import { celebrate, say, sfx } from './feedback';
-import { CoachDialog } from './CoachDialog';
+import { CoachDialog, myRoutines, routineForSong } from './CoachDialog';
 import { micState } from '../input/mic/mic';
 import { inputHub } from '../input/hub';
 import type { Hand, Song } from '../music/types';
@@ -84,7 +85,11 @@ export function Player({ song: baseSong, queue, preset, nextAction, onNavigate, 
   const id = baseSong.id;
   const [transpose, setTranspose] = useState<number>(() => preset?.transpose ?? loadPref(`transpose.${id}`, 0));
   // Everything below works on the (possibly transposed) song.
-  const song = useMemo(() => transposeSong(baseSong, transpose), [baseSong, transpose]);
+  // A coach step can practise the passage in a rhythm variation (dotted, reverse dotted).
+  const [variant, setVariant] = useState<Variant | null>(null);
+  const variantRef = useRef<Variant | null>(null);
+  const pendingLaunch = useRef<SessionOptions | null>(null);
+  const song = useMemo(() => applyVariant(transposeSong(baseSong, transpose), variant), [baseSong, transpose, variant]);
   const [tMin, tMax] = useMemo(() => transposeRange(baseSong), [baseSong]);
   const [mode, setMode] = useState<ModeKind>(() => preset?.mode ?? loadPref<ModeKind>('mode', 'learn'));
   const setupKey = (m: ModeKind) => `setup.${id}.${m}`;
@@ -152,9 +157,11 @@ export function Player({ song: baseSong, queue, preset, nextAction, onNavigate, 
   const hiddenHands = useMemo<Hand[]>(() => (!bothHands && otherHand === 'hide' ? (['R', 'L'] as Hand[]).filter((h) => !hands[h]) : []), [bothHands, otherHand, hands]);
   const auditionView = settings.modes.audition.view;
   // While performing an audition, the stage (and the sheet, from memory) can be hidden.
-  const concealStage = mode === 'audition' && running && auditionView !== 'full';
-  const concealScore = mode === 'audition' && running && auditionView === 'memory';
-  const showScore = scoreOn[mode] && !!song.scoreXml;
+  const coachView = coach && running ? coach.steps[coach.index]?.view : undefined;
+  const fromMemory = (mode === 'audition' && auditionView === 'memory') || coachView === 'memory';
+  const concealStage = (mode === 'audition' && running && auditionView !== 'full') || coachView === 'memory';
+  const concealScore = (mode === 'audition' && running && auditionView === 'memory') || coachView === 'memory';
+  const showScore = (scoreOn[mode] || (!!coach && coach.steps[coach.index]?.view === 'sheet')) && !!song.scoreXml;
   const loopBeats = loopOn
     ? { start: song.measures[loop.from].start, end: song.measures[loop.to].start + song.measures[loop.to].length }
     : null;
@@ -176,12 +183,12 @@ export function Player({ song: baseSong, queue, preset, nextAction, onNavigate, 
   });
   ui.current = {
     userHands,
-    showFalling: (mode !== 'audition' || auditionView === 'full') && settings.showFalling,
+    showFalling: (mode !== 'audition' || auditionView === 'full') && settings.showFalling && coachView !== 'sheet',
     hideCues: mode === 'audition',
     rate,
     loopBeats,
     idleBeat: (loopBeats?.start ?? song.measures[Math.min(startMeasure, song.measures.length - 1)].start) - 0.5,
-    display: settings,
+    display: coachView === 'sheet' ? { ...settings, showTargets: false } : settings,
     preferFlats: song.keyFifths < 0,
     hiddenHands,
     lookAhead: mode === 'learn' ? settings.modes.learn.lookAhead : 0,
@@ -315,12 +322,15 @@ export function Player({ song: baseSong, queue, preset, nextAction, onNavigate, 
         setRate(Math.round(s.rate * 100) / 100);
         // Coach: a clean pass moves on to the next step.
         const c = coachRef.current;
-        if (c && s.status === 'running' && s.passList.length > seenPasses) {
+        const listened = !!c && s.status === 'finished' && c.steps[c.index]?.mode === 'listen';
+        if (c && ((s.status === 'running' && s.passList.length > seenPasses) || listened)) {
           seenPasses = s.passList.length;
-          if (passCompletesStep(c.steps[c.index], s.passList[seenPasses - 1])) {
+          if (listened || stepDone(c.steps[c.index], s.passList)) {
             if (c.index >= c.steps.length - 1) {
               coachRef.current = null;
               setCoach(null);
+              variantRef.current = null;
+              setVariant(null);
               s.stop(performance.now());
               setToast('Passage learned! 🎉 Every step done.');
               celebrate();
@@ -439,23 +449,42 @@ export function Player({ song: baseSong, queue, preset, nextAction, onNavigate, 
     setLoop(region);
     setToast(`Step ${index + 1} of ${c.steps.length}: ${step.title}`);
     say(`Step ${index + 1}. ${step.title}. ${step.hint}`);
-    void launch({
+    const opts: SessionOptions = {
       mode: step.mode,
       hands: step.hands,
-      otherHand: step.hands.length === 2 ? 'mute' : otherHand,
+      otherHand: step.hands.length === 2 ? 'mute' : otherHand === 'app' && step.mode === 'listen' ? 'mute' : otherHand,
       rate: step.rate,
       metronome,
+      // Listen plays the passage once (a loop region ends Listen instead of repeating it).
       loop: region,
       autoSpeedUp: step.autoSpeedUp,
       wait: step.wait,
-    });
+    };
+    const v = step.variant ?? null;
+    if (v !== variantRef.current) {
+      // The piece is rewritten in the new rhythm first; the step starts once it is on screen.
+      variantRef.current = v;
+      setVariant(v);
+      pendingLaunch.current = opts;
+      return;
+    }
+    void launch(opts);
   };
 
-  const startCoach = (o: CoachOptions) => {
+  const startCoach = (o: CoachOptions, routine: Routine) => {
     setCoachDialog(false);
-    coachRef.current = { steps: buildCoachPlan(song, { ...o, cleanPass: tuningOf(getSettings()).cleanPass }), index: 0, from: o.from, to: o.to };
+    const steps = routineToSteps(song, routine, { ...o, cleanPass: tuningOf(getSettings()).cleanPass });
+    if (!steps.length) return;
+    coachRef.current = { steps, index: 0, from: o.from, to: o.to };
     runStepRef.current(0);
   };
+  const coachPassage = () =>
+    loopOn ? loop : heat && report?.weakRange ? report.weakRange : { from: firstBar, to: Math.min(song.measures.length - 1, firstBar + 3) };
+  const attachedRoutine = useMemo(() => {
+    const id = routineForSong(baseSong.id);
+    return id ? ([...ROUTINE_TEMPLATES, ...myRoutines()].find((r) => r.id === id) ?? null) : null;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [baseSong.id, coachDialog]);
 
   const startFix = (r: Report) => {
     const steps = buildFixPlan(r, tuningOf(getSettings()).cleanPass);
@@ -468,6 +497,11 @@ export function Player({ song: baseSong, queue, preset, nextAction, onNavigate, 
   const endCoach = useCallback(() => {
     coachRef.current = null;
     setCoach(null);
+    pendingLaunch.current = null;
+    if (variantRef.current) {
+      variantRef.current = null;
+      setVariant(null);
+    }
   }, []);
 
   const stop = useCallback(() => {
@@ -605,6 +639,14 @@ export function Player({ song: baseSong, queue, preset, nextAction, onNavigate, 
   }, [song, settings.fullKeyboard]);
 
   const beginRef = useRef<() => void>(() => {});
+  // A coach step waiting for its rhythm variation to be on screen.
+  useEffect(() => {
+    const opts = pendingLaunch.current;
+    if (!opts) return;
+    pendingLaunch.current = null;
+    void launch(opts);
+  }, [launch]);
+
   const startFixRef = useRef(startFixBar);
   startFixRef.current = startFixBar;
 
@@ -941,9 +983,20 @@ export function Player({ song: baseSong, queue, preset, nextAction, onNavigate, 
         </button>
 
         {!running && mode !== 'listen' && (
-          <button className="btn" onClick={() => setCoachDialog(true)} title="A guided routine for a hard passage">
-            🎓 Coach
-          </button>
+          <span className="coach-btns">
+            <button
+              className="btn"
+              onClick={() => (attachedRoutine ? startCoach({ ...coachPassage(), startRate: 0.6, targetRate: 1 }, attachedRoutine) : setCoachDialog(true))}
+              title={attachedRoutine ? `Start "${attachedRoutine.name}" on the loop (or the first bars)` : 'A guided routine for a hard passage'}
+            >
+              🎓 {attachedRoutine ? `Coach: ${attachedRoutine.name}` : 'Coach'}
+            </button>
+            {attachedRoutine && (
+              <button className="btn" onClick={() => setCoachDialog(true)} title="Choose another routine or passage" aria-label="Coach options">
+                ⋯
+              </button>
+            )}
+          </span>
         )}
         <div className="group" title="Repeat a range of bars">
             <button className={`btn toggle ${loopOn ? 'on' : ''}`} disabled={running} onClick={() => setLoopOn(!loopOn)}>
@@ -1065,8 +1118,8 @@ export function Player({ song: baseSong, queue, preset, nextAction, onNavigate, 
         />
         {concealStage && (
           <div className="concealed-note">
-            {auditionView === 'memory' ? '🎭 Playing from memory' : '🎼 Reading from the sheet music'}
-            <div className="muted small">Your report comes at the end.</div>
+            {fromMemory ? '🎭 Playing from memory' : '🎼 Reading from the sheet music'}
+            <div className="muted small">{coachView ? 'Pianist is listening.' : 'Your report comes at the end.'}</div>
           </div>
         )}
         {countdown !== null && countdown > 0 && (
@@ -1145,13 +1198,7 @@ export function Player({ song: baseSong, queue, preset, nextAction, onNavigate, 
       {coachDialog && (
         <CoachDialog
           song={song}
-          initial={
-            loopOn
-              ? loop
-              : heat && report?.weakRange
-                ? report.weakRange
-                : { from: firstBar, to: Math.min(song.measures.length - 1, firstBar + 3) }
-          }
+          initial={coachPassage()}
           onStart={startCoach}
           onClose={() => setCoachDialog(false)}
         />

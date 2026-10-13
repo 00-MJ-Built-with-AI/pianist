@@ -23,10 +23,10 @@ import {
   type Day,
 } from './store/db';
 import type { Report } from './engine/types';
-import { scaleExercise, sightReading } from './music/exercises';
+import { buildExercise, scaleExercise, sightReading, type SavedExercise } from './music/exercises';
 import { buildPlan, type PlanItem } from './store/plan';
 import { useReminder } from './ui/reminder';
-import { useSettings } from './store/settings';
+import { useSettings, loadPref } from './store/settings';
 import { InputBar } from './ui/InputBar';
 import { InstallButton } from './ui/InstallButton';
 import { ProfileMenu } from './ui/ProfileMenu';
@@ -55,7 +55,7 @@ type View =
   | { name: 'transcribe'; file: File | null; collectionId: string | null }
   | { name: 'play'; song: Song; queue?: Queue; preset?: PlayerPreset; next?: () => Song; returnTo?: Tab }
   | { name: 'edit'; song: Song; back: View }
-  | { name: 'ear'; kind: EarKind };
+  | { name: 'ear'; kind: EarKind | 'custom' };
 
 export function App() {
   const [view, setView] = useState<View>({ name: 'library' });
@@ -172,9 +172,10 @@ export function App() {
         sessions,
         songs: [...builtin, ...mine],
         bests,
-        options: { items: settings.planItems, maxFix: settings.maxFix },
+        options: { items: settings.planItems, maxFix: settings.maxFix, warmups: loadPref<SavedExercise[]>('myExercises', []) },
       }),
-    [sessions, builtin, mine, bests, settings.planItems, settings.maxFix],
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [sessions, builtin, mine, bests, settings.planItems, settings.maxFix, view.name],
   );
   const todaySeconds = days.find((d) => d.date === dayKey())?.seconds ?? 0;
   const lastPlayed = useMemo(() => {
@@ -188,6 +189,9 @@ export function App() {
     if (l.type === 'song') {
       const song = [...builtin, ...mine].find((s) => s.id === l.songId);
       if (song) setView({ name: 'play', song, preset: item.preset });
+    } else if (l.type === 'custom') {
+      const x = loadPref<SavedExercise[]>('myExercises', []).find((e) => e.id === l.id);
+      if (x) setView({ name: 'play', song: buildExercise(x.spec, x.id), preset: item.preset });
     } else if (l.type === 'scale') {
       setView({ name: 'play', song: scaleExercise({ ...l, beats: 1, bpm: 80 }), preset: item.preset });
     } else {
@@ -341,6 +345,14 @@ export function App() {
                 if (collection) await saveCollection(addSongs(collection, [song.id]));
                 await refresh();
                 setView({ name: 'play', song });
+              }}
+              onSavedMany={async (songs, collection, newName) => {
+                for (const s of songs) await saveSong(s);
+                const ids = songs.map((s) => s.id);
+                if (newName) await saveCollection(addSongs(newCollection(newName), ids));
+                else if (collection) await saveCollection(addSongs(collection, ids));
+                await refresh();
+                setView({ name: 'library' });
               }}
             />
           </Suspense>

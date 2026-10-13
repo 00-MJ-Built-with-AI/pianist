@@ -14,6 +14,8 @@ import type { Song } from '../music/types';
 import { EAR_LEVELS, type EarKind } from '../music/ear';
 import type { PlayerPreset } from './Player';
 import { loadPref, savePref } from '../store/settings';
+import { RHYTHM_LABEL, type ExerciseRhythm } from '../music/rhythm';
+import { MyExercises } from './MyExercises';
 
 export interface ExerciseLaunch {
   song: Song;
@@ -37,6 +39,7 @@ interface Prefs {
   chordBeats: 4 | 2;
   level: number;
   bars: 4 | 8;
+  rhythm: ExerciseRhythm;
 }
 
 const DEFAULTS: Prefs = {
@@ -52,6 +55,7 @@ const DEFAULTS: Prefs = {
   chordBeats: 4,
   level: 1,
   bars: 4,
+  rhythm: 'straight',
 };
 
 export function newSeed(): number {
@@ -64,7 +68,7 @@ export function Exercises({
   onExam,
 }: {
   onStart: (launch: ExerciseLaunch) => void;
-  onEar: (kind: EarKind) => void;
+  onEar: (kind: EarKind | 'custom') => void;
   onExam?: () => void;
 }) {
   const [p, setP] = useState<Prefs>(() => ({ ...DEFAULTS, ...loadPref<Partial<Prefs>>('exercises', {}) }));
@@ -77,9 +81,17 @@ export function Exercises({
 
   const technique = () => {
     if (p.kind === 'arp-major' || p.kind === 'arp-minor') {
-      return arpeggioExercise({ pc: p.pc, quality: p.kind === 'arp-major' ? 'major' : 'minor', octaves: p.octaves, hands: p.hands, beats: p.beats, bpm: p.bpm });
+      return arpeggioExercise({
+        pc: p.pc,
+        quality: p.kind === 'arp-major' ? 'major' : 'minor',
+        octaves: p.octaves,
+        hands: p.hands,
+        beats: p.beats,
+        bpm: p.bpm,
+        rhythm: p.rhythm,
+      });
     }
-    return scaleExercise({ pc: p.pc, kind: p.kind, octaves: p.octaves, hands: p.hands, beats: p.beats, bpm: p.bpm });
+    return scaleExercise({ pc: p.pc, kind: p.kind, octaves: p.octaves, hands: p.hands, beats: p.beats, bpm: p.bpm, rhythm: p.rhythm });
   };
 
   const sight = () => sightReading(p.level, p.bars, newSeed());
@@ -119,6 +131,10 @@ export function Exercises({
               </button>
             );
           })}
+          <button className="level-pick" onClick={() => onEar('custom')}>
+            <b>⚙ Your own drill</b>
+            <span className="muted small">Choose the intervals, chords, notes or key; answer by playing or by name.</span>
+          </button>
         </div>
       </section>
 
@@ -169,6 +185,16 @@ export function Exercises({
             </select>
           </label>
           <label>
+            Rhythm
+            <select value={p.rhythm} onChange={(e) => set({ rhythm: e.target.value as ExerciseRhythm })}>
+              {(Object.keys(RHYTHM_LABEL) as ExerciseRhythm[]).map((r) => (
+                <option key={r} value={r}>
+                  {RHYTHM_LABEL[r]}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
             Tempo
             <input type="number" min={40} max={200} value={p.bpm} onChange={(e) => set({ bpm: Number(e.target.value) || 80 })} />
           </label>
@@ -177,6 +203,8 @@ export function Exercises({
           ▶ Practise
         </button>
       </section>
+
+      <MyExercises onStart={(song) => onStart({ song, preset: { mode: 'learn' } })} />
 
       <section className="ex-card">
         <h2>Chord progressions</h2>

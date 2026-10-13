@@ -8,7 +8,7 @@ At a glance:
 | | |
 | --- | --- |
 | ✅ Built and live | 100+ features (below) |
-| ⏳ Agreed and still to build | 41 features, in the order agreed |
+| ⏳ Agreed and still to build | 37 features, in the order agreed |
 | 🙋 Needs you | 6 things only you can do (2 more already done), and 7 decisions to make before those features are built |
 
 The top right of the app shows when the version you're running was published. If a newer one is online, it turns into an **Update available** button.
@@ -46,6 +46,10 @@ The top right of the app shows when the version you're running was published. If
 - Move around while playing: previous or next bar, skip a note, start from any bar, click a bar.
 - Guide notes (Pianist softly plays your part).
 - The practice coach (a step-by-step routine for a hard passage) and "Fix my mistakes" from any report.
+- **Your own coach routines**:
+  - a step builder with ready-made templates (hands separately, slow to fast, 2-bar chunks then join, rhythm variations, listen then from memory);
+  - special steps: Listen first, From memory, and Eyes on the sheet;
+  - a routine attached to a piece, so its Coach button starts it straight away.
 - Hands-free control: spare piano keys or pedals act as Start/Stop, Restart, Next bar, Previous bar and Skip.
 
 ### Options for each mode (⚙ button)
@@ -91,6 +95,7 @@ The top right of the app shows when the version you're running was published. If
 - 11 built-in public-domain or original pieces, including the original "Lantern River Lullaby".
 - Import MIDI and MusicXML (.mid, .musicxml, .xml, .mxl) by dragging files in.
 - **Record a song** by playing it, and **transcribe audio** (MP3, WAV, M4A, OGG, FLAC) into sheet music with AI.
+- **Transcriber presets**: ready-made and your own, the last settings remembered, and several files at once into a collection.
 - **Note editor** (add, move, resize and delete notes, switch hands, undo) and **export** to MusicXML, MIDI or PDF.
 - **Collections**: ordered lists of songs, practised in order.
 - Search, sort, filter by level or tag, favourites, and each song's own name, emoji, colour, level, tags and notes.
@@ -98,6 +103,12 @@ The top right of the app shows when the version you're running was published. If
 ### Exercises and training
 - Scales and arpeggios in all 12 keys, chord progressions, and endless sight-reading at four levels.
 - **Ear training**: notes, intervals, chords and melodies, with levels that adapt to you.
+- **Your own ear drills**: pick exact intervals (up, down, together), chord types and inversions, notes in a key or melodies, and the note range. Answer by playing or by choosing the name. Rounds of 10–20, and the things you miss most come up more often.
+- **Your own exercises**:
+  - a pattern builder (Hanon-style patterns moved up the scale and back down, through any keys);
+  - chord drills (types, inversions, block or broken);
+  - scales in rhythms (dotted, swing, triplets, accents).
+  - Save them, and let them take turns as the daily warm-up.
 - **Mock exam**: scales, pieces and sight-reading combined into one mark, graded Pass, Merit or Distinction, with a history.
 
 ### Reports and progress
@@ -127,11 +138,11 @@ The top right of the app shows when the version you're running was published. If
 
 🙋 marks features that need a decision from you first (see the next section).
 
-**Step 2: the 15 features chosen earlier**
-1. **Your own coach routines**: build and save your own step-by-step practice routines.
-2. **Custom ear training**: choose which intervals, chords and keys to drill.
-3. **Custom exercises**: your own patterns, keys and rhythms (for example Hanon-style drills).
-4. **Transcriber presets**: save your favourite settings for turning audio into sheet music.
+**Step 2: the 15 features chosen earlier** (1–4 done 13 Oct 2026)
+1. ✅ **Your own coach routines**
+2. ✅ **Custom ear training**
+3. ✅ **Custom exercises**
+4. ✅ **Transcriber presets**
 5. **Remember settings per song**: tempo, key, hands and loop for each piece. Partly done: each mode already remembers its setup per piece.
 6. **Custom keyboard shortcuts**: choose your own computer keys for Start, Next bar and so on.
 7. **Report targets and PDF**: set goals (score, accuracy, tempo), and print or save reports as PDF.
@@ -235,3 +246,4 @@ All other features can be built without further input.
 | 13 Oct 2026 | Options for each mode, hand controls, the Show row, game rules, comparing takes, mock exam |
 | 13 Oct 2026 | Always loads the latest version, with the publish date and an Update button at the top right; this status page; 16 more features planned (step 5) |
 | 13 Oct 2026 | Automatic publishing from GitHub turned on; Google sign-in key for sync added |
+| 13 Oct 2026 | Your own coach routines, custom ear drills, custom exercises (patterns, chord drills, rhythms, warm-ups), transcriber presets and batch transcription |

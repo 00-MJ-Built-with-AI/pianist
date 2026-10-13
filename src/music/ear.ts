@@ -183,3 +183,170 @@ export function nextLevel(level: number, streak: number, misses: number): number
   if (misses >= 2) return Math.max(1, level - 1);
   return level;
 }
+
+/* ------------------------------------------------------------------ your own drills */
+
+export type CustomWhat = 'intervals' | 'chords' | 'notes' | 'melodies';
+export type IntervalDir = 'up' | 'down' | 'together';
+
+export const CUSTOM_CHORDS: Record<string, { name: string; tones: number[] }> = {
+  ...CHORDS,
+  min7: { name: 'minor 7th', tones: [0, 3, 7, 10] },
+  sus2: { name: 'sus2', tones: [0, 2, 7] },
+  sus4: { name: 'sus4', tones: [0, 5, 7] },
+};
+
+/** A drill the player puts together: exactly what to hear, where, how to answer, and how long a round is. */
+export interface CustomEar {
+  what: CustomWhat;
+  intervals: number[]; // semitones, 1–12
+  directions: IntervalDir[];
+  chords: string[]; // keys of CUSTOM_CHORDS
+  inversions: number[]; // 0 = root position
+  low: number; // pitch range
+  high: number;
+  keyPc: number; // notes and melodies are in this key
+  minor: boolean;
+  melodyLength: number;
+  answer: 'play' | 'name';
+  round: number; // questions per round (0 = endless)
+}
+
+export const DEFAULT_CUSTOM_EAR: CustomEar = {
+  what: 'intervals',
+  intervals: [3, 4, 7],
+  directions: ['up'],
+  chords: ['maj', 'min'],
+  inversions: [0],
+  low: 48,
+  high: 79,
+  keyPc: 0,
+  minor: false,
+  melodyLength: 4,
+  answer: 'play',
+  round: 10,
+};
+
+/** How often each item was asked and answered right (for weak spots). */
+export type EarStats = Record<string, { asked: number; right: number }>;
+
+export interface CustomQuestion extends EarQuestion {
+  /** What was asked, for the weak-spot stats ("int:7:up", "chord:min:1", "note:4", "melody"). */
+  item: string;
+  /** Answer by name: the correct choice and all the choices. */
+  choice: string;
+  choices: string[];
+}
+
+const DIR_LABEL: Record<IntervalDir, string> = { up: 'up', down: 'down', together: 'together' };
+const INV_LABEL = ['', ', 1st inversion', ', 2nd inversion', ', 3rd inversion'];
+const PC_NAMES = ['C', 'C♯/D♭', 'D', 'D♯/E♭', 'E', 'F', 'F♯/G♭', 'G', 'G♯/A♭', 'A', 'A♯/B♭', 'B'];
+const NAT_MINOR = [0, 2, 3, 5, 7, 8, 10];
+
+/** Everything a drill can ask, as item keys. */
+export function customItems(c: CustomEar): string[] {
+  if (c.what === 'intervals') return c.intervals.flatMap((s) => c.directions.map((d) => `int:${s}:${d}`));
+  if (c.what === 'chords') {
+    return c.chords.flatMap((t) => c.inversions.filter((i) => i < (CUSTOM_CHORDS[t]?.tones.length ?? 3)).map((i) => `chord:${t}:${i}`));
+  }
+  if (c.what === 'notes') return (c.minor ? NAT_MINOR : MAJOR).map((st) => `note:${(c.keyPc + st) % 12}`);
+  return ['melody'];
+}
+
+/** The name an item is answered with. */
+export function itemName(item: string): string {
+  const [kind, a, b] = item.split(':');
+  if (kind === 'int') return `${intervalName(Number(a))} ${DIR_LABEL[b as IntervalDir]}`;
+  if (kind === 'chord') return `${CUSTOM_CHORDS[a]?.name ?? a}${INV_LABEL[Number(b)] ?? ''}`;
+  if (kind === 'note') return PC_NAMES[Number(a)];
+  return 'melody';
+}
+
+/** Picks an item, favouring the ones missed most. */
+export function pickItem(items: string[], stats: EarStats, rnd: Rng): string {
+  const weight = (it: string) => {
+    const s = stats[it];
+    return s && s.asked ? 1 + 3 * (1 - s.right / s.asked) : 1.5;
+  };
+  const total = items.reduce((a, it) => a + weight(it), 0);
+  let r = rnd() * total;
+  for (const it of items) {
+    r -= weight(it);
+    if (r <= 0) return it;
+  }
+  return items[items.length - 1];
+}
+
+const within = (lo: number, hi: number, rnd: Rng) => lo + Math.floor(rnd() * Math.max(1, hi - lo + 1));
+
+export function makeCustomQuestion(c: CustomEar, rnd: Rng, stats: EarStats = {}): CustomQuestion {
+  const items = customItems(c);
+  const item = items.length ? pickItem(items, stats, rnd) : 'melody';
+  const choices = c.what === 'melodies' ? [] : items.map(itemName);
+  const [kind, a, b] = item.split(':');
+  const lo = Math.min(c.low, c.high - 12);
+  const hi = Math.max(c.high, c.low + 12);
+  if (kind === 'int') {
+    const size = Number(a);
+    const dir = b as IntervalDir;
+    const first = dir === 'down' ? within(lo + size, hi, rnd) : within(lo, hi - size, rnd);
+    const second = dir === 'down' ? first - size : first + size;
+    // Spelled the way the normal drills do: minor intervals with flats, major ones from a black key too.
+    const low = Math.min(first, second);
+    const flats = [3, 8, 10].includes(size) || (isBlackKey(low) && [4, 9, 11].includes(size));
+    const answer = dir === 'together' ? [[first, second]] : [[first], [second]];
+    return {
+      kind: 'intervals',
+      level: 0,
+      answer,
+      hint: dir === 'together' ? undefined : first,
+      label: `${itemName(item)} (${name(first, flats)} → ${name(second, flats)})`,
+      item,
+      choice: itemName(item),
+      choices,
+    };
+  }
+  if (kind === 'chord') {
+    const base = CUSTOM_CHORDS[a].tones;
+    const inv = Number(b);
+    const span = base[base.length - 1] + (inv ? 12 : 0);
+    const root = within(lo, hi - span, rnd);
+    let tones = base.map((t) => root + t);
+    for (let i = 0; i < inv; i++) tones = [...tones.slice(1), tones[0] + 12];
+    const rootName = (a === 'min' || a === 'dim' || a === 'min7' ? MINOR_ROOTS : MAJOR_ROOTS)[root % 12];
+    return { kind: 'chords', level: 0, answer: [tones], label: `${rootName} ${itemName(item)}`, item, choice: itemName(item), choices };
+  }
+  const scale = c.minor ? NAT_MINOR : MAJOR;
+  // The key's tonic inside the range, as a reference.
+  let tonic = c.keyPc + 12 * Math.floor(lo / 12);
+  while (tonic < lo) tonic += 12;
+  if (kind === 'note') {
+    const pc = Number(a);
+    const options: number[] = [];
+    for (let p = lo; p <= hi; p++) if (((p % 12) + 12) % 12 === pc) options.push(p);
+    const p = options.length ? options[Math.floor(rnd() * options.length)] : tonic;
+    return { kind: 'notes', level: 0, answer: [[p]], reference: tonic, label: pitchName(p), item, choice: itemName(item), choices };
+  }
+  // A melody in the key, from the tonic, moving mostly by step.
+  const degs = [0];
+  let deg = 0;
+  for (let i = 1; i < Math.max(2, c.melodyLength); i++) {
+    let step = rnd() < 0.7 ? 1 : 2;
+    if (rnd() < 0.5) step = -step;
+    const next = deg + step;
+    const pitch = tonic + 12 * Math.floor(next / 7) + scale[((next % 7) + 7) % 7];
+    deg = pitch < lo || pitch > hi ? deg - step : next;
+    degs.push(deg);
+  }
+  const pitches = degs.map((d) => tonic + 12 * Math.floor(d / 7) + scale[((d % 7) + 7) % 7]);
+  return { kind: 'melodies', level: 0, answer: pitches.map((p) => [p]), hint: pitches[0], label: pitches.map((p) => name(p)).join(' '), item, choice: '', choices: [] };
+}
+
+/** The items missed most (at least two tries), worst first. */
+export function weakSpots(stats: EarStats, items: string[], count = 3): Array<{ item: string; rate: number; asked: number }> {
+  return items
+    .map((item) => ({ item, asked: stats[item]?.asked ?? 0, rate: stats[item]?.asked ? stats[item].right / stats[item].asked : 1 }))
+    .filter((x) => x.asked >= 2 && x.rate < 1)
+    .sort((a, b) => a.rate - b.rate || b.asked - a.asked)
+    .slice(0, count);
+}

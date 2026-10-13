@@ -44,3 +44,41 @@ describe('ear training', () => {
     expect(intervalName(7)).toBe('perfect 5th');
   });
 });
+
+describe('your own ear drills', () => {
+  it('asks only what was chosen, inside the range', async () => {
+    const { makeCustomQuestion, customItems, DEFAULT_CUSTOM_EAR, seededRng } = await import('./ear');
+    const c = { ...DEFAULT_CUSTOM_EAR, what: 'intervals' as const, intervals: [7], directions: ['down' as const, 'together' as const], low: 55, high: 72 };
+    expect(customItems(c)).toEqual(['int:7:down', 'int:7:together']);
+    const rnd = seededRng(3);
+    for (let i = 0; i < 20; i++) {
+      const q = makeCustomQuestion(c, rnd);
+      const ps = q.answer.flat();
+      expect(Math.abs(ps[0] - ps[1])).toBe(7);
+      expect(Math.min(...ps)).toBeGreaterThanOrEqual(55);
+      expect(Math.max(...ps)).toBeLessThanOrEqual(72);
+      expect(q.choices).toEqual(['perfect 5th down', 'perfect 5th together']);
+      if (q.item.endsWith('together')) expect(q.answer).toHaveLength(1);
+    }
+  });
+
+  it('builds chords with inversions and notes in the key', async () => {
+    const { makeCustomQuestion, DEFAULT_CUSTOM_EAR, seededRng } = await import('./ear');
+    const chord = makeCustomQuestion({ ...DEFAULT_CUSTOM_EAR, what: 'chords', chords: ['min'], inversions: [1] }, seededRng(1));
+    const [a, b, c] = chord.answer[0];
+    expect([b - a, c - a]).toEqual([4, 9]); // minor, 1st inversion
+    const note = makeCustomQuestion({ ...DEFAULT_CUSTOM_EAR, what: 'notes', keyPc: 7 }, seededRng(2));
+    expect([7, 9, 11, 0, 2, 4, 6]).toContain(note.answer[0][0] % 12);
+    expect(note.reference! % 12).toBe(7);
+  });
+
+  it('asks the weakest items more often and lists them', async () => {
+    const { pickItem, weakSpots, seededRng } = await import('./ear');
+    const stats = { a: { asked: 10, right: 2 }, b: { asked: 10, right: 10 } };
+    const rnd = seededRng(5);
+    let a = 0;
+    for (let i = 0; i < 400; i++) if (pickItem(['a', 'b'], stats, rnd) === 'a') a++;
+    expect(a).toBeGreaterThan(240); // weights 3.4 vs 1
+    expect(weakSpots(stats, ['a', 'b']).map((x) => x.item)).toEqual(['a']);
+  });
+});
