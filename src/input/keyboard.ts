@@ -6,6 +6,14 @@ const KEY_OFFSETS: Record<string, number> = {
   KeyU: 10, KeyJ: 11, KeyK: 12, KeyO: 13, KeyL: 14, KeyP: 15, Semicolon: 16, Quote: 17,
 };
 
+const KEY_LETTERS: Record<string, string> = { Semicolon: ';', Quote: "'" };
+const PC_KEYS = Object.entries(KEY_OFFSETS).map(([code, off]) => ({ off, letter: KEY_LETTERS[code] ?? code.slice(3) }));
+
+/** The computer key that plays this pitch right now (with the current octave), if any. */
+export function pcKeyFor(pitch: number): string | null {
+  return PC_KEYS.find((k) => k.off === pitch - baseOctaveC)?.letter ?? null;
+}
+
 let baseOctaveC = 60;
 const down = new Map<string, number>();
 const listeners = new Set<(base: number) => void>();

@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { MODE_LABELS, type Report } from '../engine/types';
 import type { Song } from '../music/types';
 import { replayRecording } from './replay';
+import type { HighScore } from '../store/highScores';
 import { useSettings } from '../store/settings';
 
 interface Props {
@@ -13,6 +14,10 @@ interface Props {
   onNext?: () => void;
   nextTitle?: string;
   onFix?: () => void;
+  /** Audition: compare this take with the best earlier one. */
+  onCompare?: () => void;
+  /** Piano Roll game: where this score landed in the high-score table. */
+  game?: { rank: number | null; scores: HighScore[] } | null;
 }
 
 const W = 640;
@@ -178,7 +183,7 @@ function DynamicsChart({ report, song }: { report: Report; song: Song | null }) 
   );
 }
 
-export function ReportView({ report, song, onClose, onPracticeBars, onAgain, onNext, nextTitle, onFix }: Props) {
+export function ReportView({ report, song, onClose, onPracticeBars, onAgain, onNext, nextTitle, onFix, onCompare, game }: Props) {
   const sections = useSettings().reportSections;
   const hasMistakes = report.measures.some((m) => m.score !== null && m.score < 0.9);
   const [replaying, setReplaying] = useState(false);
@@ -221,6 +226,11 @@ export function ReportView({ report, song, onClose, onPracticeBars, onAgain, onN
         <div className="stat-row">
           {j ? (
             <>
+              {j.points !== undefined && j.points > 0 && (
+                <div className="stat">
+                  <b>{j.points.toLocaleString()}</b>Points
+                </div>
+              )}
               <div className="stat">
                 <b>{j.perfect}</b>Perfect
               </div>
@@ -264,6 +274,25 @@ export function ReportView({ report, song, onClose, onPracticeBars, onAgain, onN
             </>
           )}
         </div>
+
+        {game && (
+          <section className="game-result">
+            <h4>
+              {j?.gameOver ? 'Game over. ' : ''}
+              {game.rank === 0 ? '🏆 New high score!' : game.rank !== null ? `#${game.rank + 1} in your high scores` : 'High scores'}
+            </h4>
+            <ol className="high-scores">
+              {game.scores.map((h, i) => (
+                <li key={h.date + i} className={h.date === report.date ? 'this' : ''}>
+                  <b>{h.points.toLocaleString()}</b>{' '}
+                  <span className="muted small">
+                    {new Date(h.date).toLocaleDateString(undefined, { day: 'numeric', month: 'short' })} · {Math.round(h.rate * 100)}% · combo {h.maxCombo}
+                  </span>
+                </li>
+              ))}
+            </ol>
+          </section>
+        )}
 
         <section>
           <h4>
@@ -322,6 +351,11 @@ export function ReportView({ report, song, onClose, onPracticeBars, onAgain, onN
           {report.recording.some((e) => e.type === 'on') && (
             <button className="btn" onClick={toggleReplay}>
               {replaying ? '■ Stop replay' : '▶ Replay my performance'}
+            </button>
+          )}
+          {onCompare && (
+            <button className="btn" onClick={onCompare} title="Bar by bar, next to your best earlier take">
+              ⇆ Compare with best take
             </button>
           )}
           {onFix && hasMistakes && (

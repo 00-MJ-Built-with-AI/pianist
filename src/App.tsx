@@ -44,12 +44,13 @@ const Exercises = lazy(() => import('./ui/Exercises').then((m) => ({ default: m.
 const Editor = lazy(() => import('./ui/Editor').then((m) => ({ default: m.Editor })));
 const EarTraining = lazy(() => import('./ui/EarTraining').then((m) => ({ default: m.EarTraining })));
 const Checkup = lazy(() => import('./ui/Checkup').then((m) => ({ default: m.Checkup })));
+const Exam = lazy(() => import('./ui/Exam').then((m) => ({ default: m.Exam })));
 const loading = <div className="loading muted">Loading…</div>;
 
 type Tab = 'library' | 'exercises' | 'progress' | 'settings';
 
 type View =
-  | { name: Tab | 'record' | 'checkup' }
+  | { name: Tab | 'record' | 'checkup' | 'exam' }
   | { name: 'transcribe'; file: File | null; collectionId: string | null }
   | { name: 'play'; song: Song; queue?: Queue; preset?: PlayerPreset; next?: () => Song; returnTo?: Tab }
   | { name: 'edit'; song: Song; back: View }
@@ -305,6 +306,7 @@ export function App() {
             <Exercises
               onStart={(l) => setView({ name: 'play', song: l.song, preset: l.preset, next: l.next, returnTo: 'exercises' })}
               onEar={(kind) => setView({ name: 'ear', kind })}
+              onExam={() => setView({ name: 'exam' })}
             />
           </Suspense>
         )}
@@ -315,6 +317,11 @@ export function App() {
         )}
         {view.name === 'progress' && <Progress songs={[...builtin, ...mine]} />}
         {view.name === 'settings' && <SettingsPage onCheckup={() => setView({ name: 'checkup' })} />}
+        {view.name === 'exam' && (
+          <Suspense fallback={loading}>
+            <Exam songs={[...mine, ...builtin]} onExit={() => setView({ name: 'exercises' })} />
+          </Suspense>
+        )}
         {view.name === 'checkup' && (
           <Suspense fallback={loading}>
             <Checkup onClose={() => setView({ name: 'settings' })} />

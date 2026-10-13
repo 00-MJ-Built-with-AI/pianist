@@ -14,7 +14,8 @@ export const MODE_LABELS: Record<ModeKind, string> = {
 export interface SessionOptions {
   mode: ModeKind;
   hands: Hand[]; // hands the player plays
-  otherHand: 'app' | 'mute';
+  /** The hand the player doesn't play: Pianist plays it, it's silent, or it's hidden too. */
+  otherHand: 'app' | 'mute' | 'hide';
   rate: number; // tempo factor, 0.25 … 1.5
   metronome: boolean;
   loop: { from: number; to: number } | null; // bar indexes, inclusive
@@ -26,13 +27,22 @@ export interface SessionOptions {
   /** Timing windows and pass rules; defaults to the "normal" strictness. */
   tuning?: import('../store/settings').Tuning;
   countInBars?: number; // timed modes: bars of count-in clicks (0 = none)
-  clicks?: { subdivision: 'beat' | 'eighth'; accent: boolean; sound: ClickSound };
+  clicks?: { subdivision: 'beat' | 'eighth'; accent: boolean; sound: ClickSound; fade?: MetronomeFade; fadeAfter?: number };
   /** Softly play the player's own notes as a guide. */
   guide?: boolean;
   weights?: import('../store/settings').ScoreWeights;
+  /** Judge notes and rhythm, only the rhythm (any key), or only the notes (any timing). */
+  judging?: Judging;
+  learn?: import('../store/settings').ModeOptions['learn'];
+  practice?: { cleanPasses: number; slowDown: boolean };
+  roll?: { lives: number; perfectOnly: boolean; multiplier: boolean };
 }
 
+export type Judging = 'both' | 'rhythm' | 'notes';
+
 export type ClickSound = 'beep' | 'wood' | 'cowbell';
+/** The click drops out: after a few bars, on all but beat 1, or every other bar. */
+export type MetronomeFade = 'off' | 'fade' | 'beat1' | 'alternate';
 
 /** What happened to each note of the score. */
 export const NoteMark = {
@@ -120,7 +130,7 @@ export interface Report {
   evenness: number | null; // velocity std-dev in runs
   balance: number | null; // mean right-hand minus mean left-hand velocity
   chordSpreadMs: number | null;
-  judgments?: { perfect: number; good: number; miss: number; wrong: number; maxCombo: number };
+  judgments?: { perfect: number; good: number; miss: number; wrong: number; maxCombo: number; points?: number; gameOver?: boolean };
   passes: PassSummary[];
   tips: string[];
   weakRange: { from: number; to: number } | null; // bar indexes

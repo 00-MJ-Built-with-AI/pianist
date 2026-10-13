@@ -1,7 +1,7 @@
 import { perfToAudio } from '../audio/audio';
 import { metronomeClick, piano, type ClickLevel } from '../audio/piano';
 import type { Bus } from '../audio/audio';
-import type { ClickSound } from './types';
+import type { ClickSound, MetronomeFade } from './types';
 import type { Note, Song } from '../music/types';
 import { clickUnit } from '../music/song';
 import type { Clock } from './clock';
@@ -51,6 +51,9 @@ export interface ClickOptions {
   subdivision: 'beat' | 'eighth';
   accent: boolean;
   sound: ClickSound;
+  fade?: MetronomeFade;
+  /** Fading: bars of clicks before it goes quiet. */
+  fadeAfter?: number;
 }
 
 const DEFAULT_CLICKS: ClickOptions = { subdivision: 'beat', accent: true, sound: 'beep' };
@@ -69,8 +72,14 @@ export function buildClicks(song: Song, from: number, countIn: number, o: ClickO
     const off = b - (from - countIn);
     clicks.push({ beat: b, level: levelAt(off, Math.abs(off) < 1e-6) });
   }
+  // Bars counted from where playing starts, for the fading metronome (the count-in always sounds).
+  let bar = -1;
   for (const m of song.measures) {
+    if (m.start + m.length > from + 1e-6) bar++;
+    if (o.fade === 'fade' && bar >= (o.fadeAfter ?? 2)) continue;
+    if (o.fade === 'alternate' && bar % 2 === 1) continue;
     for (let b = 0; b < m.length - 1e-6; b += sub) {
+      if (o.fade === 'beat1' && b > 1e-6) break;
       if (m.start + b >= from - 1e-6) clicks.push({ beat: m.start + b, level: levelAt(b, b === 0 && m.number !== 0) });
     }
   }

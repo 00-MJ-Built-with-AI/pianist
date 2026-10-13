@@ -19,6 +19,7 @@ import {
 import { Calibrate } from './Calibrate';
 import { DisplayOptionsForm } from './DisplayMenu';
 import { say } from './feedback';
+import { MetronomeFadeRow, ModeOptionsForm } from './ModeOptions';
 
 function Slider(props: { label: string; hint?: string; value: number; min: number; max: number; step: number; unit?: string; onChange: (v: number) => void }) {
   return (
@@ -79,6 +80,7 @@ function Section({ id, title, children }: { id: string; title: string; children:
 const SECTIONS: Array<[string, string]> = [
   ['players', 'Players'],
   ['practice', 'Practice'],
+  ['modes', 'Modes'],
   ['metronome', 'Metronome'],
   ['sound', 'Sound'],
   ['look', 'Look'],
@@ -285,6 +287,21 @@ export function SettingsPage({ onCheckup }: { onCheckup?: () => void }) {
         <Slider label="Other hand & Listen volume" value={s.accompVolume} min={0} max={1} step={0.05} unit="%" onChange={(v) => set({ accompVolume: v })} />
       </Section>
 
+      <Section id="modes" title="Practice modes">
+        <Toggle
+          label="Each mode remembers its setup"
+          hint="Learn, Practice, Audition, Piano Roll and Listen each keep their own tempo, hands, metronome, loop and wait choices for every piece."
+          checked={s.rememberPerMode}
+          onChange={(v) => set({ rememberPerMode: v })}
+        />
+        {(['learn', 'practice', 'audition', 'roll'] as const).map((m) => (
+          <div key={m} className="mode-section">
+            <h3>{m === 'learn' ? 'Learn' : m === 'practice' ? 'Practice' : m === 'audition' ? 'Audition' : 'Piano Roll'}</h3>
+            <ModeOptionsForm mode={m} />
+          </div>
+        ))}
+      </Section>
+
       <Section id="metronome" title="Metronome & count-in">
         <Choice
           label="Count-in"
@@ -317,6 +334,9 @@ export function SettingsPage({ onCheckup }: { onCheckup?: () => void }) {
           ]}
           onChange={(v) => set({ clickSound: v })}
         />
+        <div className="mode-form">
+          <MetronomeFadeRow />
+        </div>
         <Slider label="Metronome volume" value={s.metronomeVolume} min={0} max={1} step={0.05} unit="%" onChange={(v) => set({ metronomeVolume: v })} />
         <button className="btn" onClick={() => void testClick()}>
           ♩ Test click
@@ -406,6 +426,19 @@ export function SettingsPage({ onCheckup }: { onCheckup?: () => void }) {
           onChange={(v) => set({ noteColors: v })}
         />
         <Toggle label="Glow on the notes being played" checked={s.noteGlow} onChange={(v) => set({ noteGlow: v })} />
+        <Toggle label="On-screen piano keyboard" checked={s.showKeyboard} onChange={(v) => set({ showKeyboard: v })} />
+        <Toggle label="Note names on the sheet music" checked={s.sheetLetters} onChange={(v) => set({ sheetLetters: v })} />
+        <Choice
+          label="Key labels show"
+          hint="With the computer keyboard as your piano, show which computer key plays each note."
+          value={s.keyLabelSource}
+          options={[
+            ['note', 'Note names'],
+            ['pc', 'Computer keys'],
+            ['both', 'Both'],
+          ]}
+          onChange={(v) => set({ keyLabelSource: v })}
+        />
         <DisplayOptionsForm />
       </Section>
 

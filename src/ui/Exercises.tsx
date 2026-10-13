@@ -58,7 +58,15 @@ export function newSeed(): number {
   return Math.floor(Math.random() * 1e9);
 }
 
-export function Exercises({ onStart, onEar }: { onStart: (launch: ExerciseLaunch) => void; onEar: (kind: EarKind) => void }) {
+export function Exercises({
+  onStart,
+  onEar,
+  onExam,
+}: {
+  onStart: (launch: ExerciseLaunch) => void;
+  onEar: (kind: EarKind) => void;
+  onExam?: () => void;
+}) {
   const [p, setP] = useState<Prefs>(() => ({ ...DEFAULTS, ...loadPref<Partial<Prefs>>('exercises', {}) }));
   const set = (patch: Partial<Prefs>) => {
     const next = { ...p, ...patch };
@@ -80,6 +88,15 @@ export function Exercises({ onStart, onEar }: { onStart: (launch: ExerciseLaunch
 
   return (
     <div className="exercises">
+      {onExam && (
+        <section className="ex-card">
+          <h2>Mock exam</h2>
+          <p className="muted small">Scales, your pieces and sight-reading, performed one after another like a grade exam, with one combined mark.</p>
+          <button className="btn primary" onClick={onExam}>
+            🎓 Set up an exam
+          </button>
+        </section>
+      )}
       <section className="ex-card">
         <h2>Ear training</h2>
         <p className="muted small">The app plays something; you play it back on your piano. It gets harder as you get it right.</p>

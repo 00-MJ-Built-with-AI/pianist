@@ -2422,3 +2422,328 @@ button,
   margin: 0 0 12px;
   padding-left: 20px;
 }
+
+/* ---------- show / hide strip */
+
+.view-strip {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding: 0 0 8px;
+}
+
+.view-strip .label {
+  font-size: 12px;
+  color: var(--muted);
+  margin-right: 2px;
+}
+
+.view-strip .divider {
+  width: 1px;
+  height: 18px;
+  background: var(--line);
+  margin: 0 4px;
+}
+
+.view-strip .chip {
+  border: 1px solid var(--line);
+  background: transparent;
+  color: var(--muted);
+  border-radius: 99px;
+  padding: 3px 10px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.view-strip .chip.on {
+  background: var(--bg3);
+  color: var(--text);
+  border-color: var(--accent);
+}
+
+.chip-select {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.chip-select select {
+  background: var(--bg3);
+  border: 1px solid var(--line);
+  border-radius: 99px;
+  padding: 2px 8px;
+  font-size: 12px;
+}
+
+/* ---------- mode options */
+
+.mode-menu {
+  width: min(460px, calc(100vw - 24px));
+  right: 0;
+  left: auto;
+  max-height: 70vh;
+  overflow: auto;
+}
+
+.mode-form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.mode-opt {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.mode-opt.column {
+  flex-direction: column;
+  align-items: stretch;
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+}
+
+.mode-opt > div:first-child {
+  flex: 1;
+  min-width: 160px;
+}
+
+.mode-section h3 {
+  margin: 14px 0 8px;
+  font-size: 15px;
+}
+
+/* ---------- audition: hidden stage, countdown */
+
+.stage.concealed {
+  visibility: hidden;
+}
+
+.concealed-note {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-content: center;
+  text-align: center;
+  font-size: 22px;
+  gap: 6px;
+  pointer-events: none;
+}
+
+.countdown {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  font-size: 120px;
+  font-weight: 800;
+  color: var(--accent);
+  text-shadow: 0 4px 30px rgba(0, 0, 0, 0.5);
+  pointer-events: none;
+  animation: countdown-pop 0.9s ease-out;
+}
+
+@keyframes countdown-pop {
+  from {
+    transform: scale(1.4);
+    opacity: 0;
+  }
+  30% {
+    opacity: 1;
+  }
+  to {
+    transform: scale(0.9);
+    opacity: 0.6;
+  }
+}
+
+/* ---------- Piano Roll game */
+
+.hud .points {
+  color: var(--accent);
+  font-size: 16px;
+}
+
+.hud .lives {
+  color: var(--red);
+  letter-spacing: 1px;
+}
+
+.high-scores {
+  margin: 4px 0 0;
+  padding-left: 22px;
+}
+
+.high-scores li.this {
+  color: var(--accent);
+}
+
+.game-result h4 {
+  color: var(--accent);
+}
+
+/* ---------- compare takes */
+
+.compare {
+  width: min(760px, 100%);
+}
+
+.compare-head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 24px;
+  align-items: flex-end;
+  margin-bottom: 14px;
+}
+
+.compare-head .big {
+  font-size: 34px;
+  font-weight: 800;
+}
+
+.compare-sum {
+  flex: 1;
+  min-width: 200px;
+}
+
+.good-text {
+  color: var(--good, #38c98a);
+}
+
+.compare-grid {
+  display: grid;
+  gap: 3px;
+  align-items: center;
+  overflow-x: auto;
+  padding-bottom: 6px;
+  margin-bottom: 12px;
+}
+
+.compare-grid .center {
+  text-align: center;
+}
+
+.cmp {
+  text-align: center;
+  font-size: 11px;
+  border-radius: 4px;
+  padding: 3px 0;
+  color: #0d0f14;
+}
+
+.cmp.good {
+  background: #38c98a;
+}
+
+.cmp.ok {
+  background: #ffb84d;
+}
+
+.cmp.bad {
+  background: #ff5d6c;
+}
+
+.cmp.none {
+  background: var(--bg3);
+  color: var(--muted);
+}
+
+/* ---------- note names on the sheet */
+
+.score-letter {
+  position: absolute;
+  transform: translateY(-50%);
+  color: var(--accent);
+  font-weight: 700;
+  pointer-events: none;
+  white-space: nowrap;
+}
+
+/* ---------- mock exam */
+
+.exam {
+  max-width: 820px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.exam-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+  flex-wrap: wrap;
+}
+
+.exam-row select {
+  background: var(--bg3);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 5px 8px;
+}
+
+.exam-pieces {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 6px 14px;
+}
+
+.exam-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 12px;
+  margin-bottom: 8px;
+  border: 1px solid var(--accent);
+  border-radius: 10px;
+  background: rgba(255, 209, 102, 0.08);
+}
+
+.exam-total {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  margin-bottom: 12px;
+}
+
+.exam-total .big {
+  font-size: 54px;
+  font-weight: 800;
+}
+
+.grade {
+  font-size: 22px;
+}
+
+.grade.distinction,
+.grade.merit {
+  color: var(--accent);
+}
+
+.grade.not-yet {
+  color: var(--muted);
+}
+
+.exam-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.exam-table td {
+  padding: 5px 6px;
+  border-bottom: 1px solid var(--line);
+}
+
+.exam-table .num {
+  text-align: right;
+  font-weight: 650;
+}

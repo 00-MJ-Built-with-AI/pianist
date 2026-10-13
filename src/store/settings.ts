@@ -27,6 +27,54 @@ export interface ScoreWeights {
   dynamics: number;
 }
 
+/** Customisations of each practice mode. */
+export interface ModeOptions {
+  learn: {
+    /** Pianist plays each phrase of this many bars first, then waits for you (0 = off). */
+    hearFirst: 0 | 1 | 2 | 4;
+    /** Move on only after each note is held for (most of) its written length. */
+    holdFull: boolean;
+    /** What a wrong note does. */
+    wrongNote: 'ignore' | 'flash' | 'mistake' | 'restart';
+    /** How many steps ahead the keyboard shows, faded (0 = just the current notes). */
+    lookAhead: 0 | 1 | 2 | 3;
+    /** Finger numbers on the keys to play. */
+    fingersOnKeys: boolean;
+  };
+  practice: {
+    /** Clean passes in a row before the tempo goes up. */
+    cleanPasses: number;
+    /** Two bad passes in a row slow the loop down again. */
+    slowDown: boolean;
+    /** Loops cycle right hand, left hand, both. */
+    rotateHands: boolean;
+    /** Keep-going runs: a mistake loops that bar until it's clean, then the run carries on. */
+    stopAndFix: boolean;
+  };
+  audition: {
+    view: 'full' | 'sheet' | 'memory';
+    countdown: boolean;
+    /** Restarts allowed per audition (-1 = any number, 0 = one take). */
+    restarts: number;
+  };
+  roll: {
+    /** Game over after this many misses (0 = no lives). */
+    lives: number;
+    perfectOnly: boolean;
+    /** Points multiply with the combo. */
+    multiplier: boolean;
+    /** Read ahead: notes fade out before the line, or only appear near it. */
+    reading: 'off' | 'fade' | 'late';
+  };
+}
+
+export const DEFAULT_MODE_OPTIONS: ModeOptions = {
+  learn: { hearFirst: 0, holdFull: false, wrongNote: 'mistake', lookAhead: 0, fingersOnKeys: false },
+  practice: { cleanPasses: 1, slowDown: false, rotateHands: false, stopAndFix: false },
+  audition: { view: 'full', countdown: true, restarts: -1 },
+  roll: { lives: 0, perfectOnly: false, multiplier: true, reading: 'off' },
+};
+
 export interface Settings {
   echoMidi: boolean;
   midiLatency: number; // ms
@@ -46,6 +94,22 @@ export interface Settings {
   micSensitivity: number; // 0–1, higher hears quieter notes
   /** The player listens on headphones: the microphone can't hear Pianist's own sounds. */
   headphones: boolean;
+  /** Show the on-screen piano keyboard. */
+  showKeyboard: boolean;
+  /** Note names next to the notes on the sheet music. */
+  sheetLetters: boolean;
+  /** What the labels on the keys show: note names, the computer keys that play them, or both. */
+  keyLabelSource: 'note' | 'pc' | 'both';
+  /** Per-mode customisations. */
+  modes: ModeOptions;
+  /** What is judged: notes and rhythm, only the rhythm (any key), or only the notes (any timing). */
+  judging: 'both' | 'rhythm' | 'notes';
+  /** The click drops out to train an inner pulse. */
+  metronomeFade: 'off' | 'fade' | 'beat1' | 'alternate';
+  /** Fading metronome: bars of clicks before it goes silent. */
+  fadeAfterBars: number;
+  /** Each mode keeps its own tempo, hands, metronome, loop and wait choices. */
+  rememberPerMode: boolean;
   // Practice
   strictness: 'relaxed' | 'normal' | 'strict' | 'custom';
   tuning: Tuning; // used when strictness is custom
@@ -102,6 +166,14 @@ const DEFAULTS: Settings = {
   fullKeyboard: false,
   micSensitivity: 0.5,
   headphones: false,
+  showKeyboard: true,
+  sheetLetters: false,
+  keyLabelSource: 'note',
+  modes: DEFAULT_MODE_OPTIONS,
+  judging: 'both',
+  metronomeFade: 'off',
+  fadeAfterBars: 2,
+  rememberPerMode: true,
   strictness: 'normal',
   tuning: { ...TUNING_PRESETS.normal },
   countInBars: 1,
@@ -170,6 +242,12 @@ function load(): Settings {
       planItems: { ...DEFAULTS.planItems, ...saved.planItems },
       reminder: { ...DEFAULTS.reminder, ...saved.reminder },
       controls: { ...saved.controls },
+      modes: {
+        learn: { ...DEFAULTS.modes.learn, ...saved.modes?.learn },
+        practice: { ...DEFAULTS.modes.practice, ...saved.modes?.practice },
+        audition: { ...DEFAULTS.modes.audition, ...saved.modes?.audition },
+        roll: { ...DEFAULTS.modes.roll, ...saved.modes?.roll },
+      },
     };
   } catch {
     return { ...DEFAULTS };
@@ -215,4 +293,10 @@ export function savePref(key: string, value: unknown): void {
   } catch {
     // ignore
   }
+}
+
+/** Changes one mode's options. */
+export function updateModeOptions<K extends keyof ModeOptions>(mode: K, patch: Partial<ModeOptions[K]>): void {
+  const modes = getSettings().modes;
+  updateSettings({ modes: { ...modes, [mode]: { ...modes[mode], ...patch } } });
 }

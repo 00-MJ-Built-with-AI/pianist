@@ -2,7 +2,7 @@ import { OpenSheetMusicDisplay } from 'opensheetmusicdisplay';
 import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
 import { suggestFingering } from '../music/fingering';
 import { songToMusicXml } from '../music/musicxml';
-import { pitchName } from '../music/pitch';
+import { noteLabel, pitchName } from '../music/pitch';
 import { measureIndexAt } from '../music/song';
 import type { Song } from '../music/types';
 import { useSettings } from '../store/settings';
@@ -85,6 +85,8 @@ export const ScoreView = forwardRef<ScoreHandle, Props>(function ScoreView(
   const [error, setError] = useState<string | null>(null);
   const [ready, setReady] = useState(false);
   const [marks, setMarksState] = useState<ScoreMark[]>([]);
+  // Every notehead, for note names on the sheet.
+  const [heads, setHeads] = useState<Array<{ x: number; y: number; pitch: number }>>([]);
   const [width, setWidth] = useState(0);
   const marksSig = useRef('');
   const last = useRef({ x: NaN, y: NaN });
@@ -156,6 +158,7 @@ export const ScoreView = forwardRef<ScoreHandle, Props>(function ScoreView(
           }
         }
         notePos.current = pos;
+        setHeads([...pos].map(([key, at]) => ({ ...at, pitch: Number(key.split('|')[1]) })));
 
         // Bar boxes (index = bar index of the song), spanning all staves of the system.
         const bx: Box[] = [];
@@ -347,6 +350,13 @@ export const ScoreView = forwardRef<ScoreHandle, Props>(function ScoreView(
               />
             );
           })}
+        {ready &&
+          settings.sheetLetters &&
+          heads.map((h, i) => (
+            <span key={`l${i}`} className="score-letter" style={{ left: h.x + 7 * zoom, top: h.y + 4, fontSize: Math.round(10 * zoom + 1) }}>
+              {noteLabel(h.pitch, settings.nameStyle === 'octave' ? 'letter' : settings.nameStyle, song.keyFifths < 0)}
+            </span>
+          ))}
         {page && showPlayhead && ready && <div className="score-playhead page-head" ref={headRef} />}
       </div>
       {!page && showPlayhead && <div className="score-playhead" style={{ left: `${ANCHOR * 100}%` }} />}

@@ -6,11 +6,11 @@ import { analyze } from './analysis';
 import { Clock } from './clock';
 import { FollowController, LearnController, RollController, type Flash, type SessionContext } from './controllers';
 import { NoteMark } from './types';
-import { TUNING_PRESETS } from '../store/settings';
+import { DEFAULT_MODE_OPTIONS, TUNING_PRESETS } from '../store/settings';
 
 const song = (id: string) => builtinSongs().find((s) => s.id === id)!;
 
-function context(s: Song, hands: Hand[], bpm = s.bpm): SessionContext {
+function context(s: Song, hands: Hand[], bpm = s.bpm, extra: Partial<SessionContext> = {}): SessionContext {
   const region = wholeSong(s);
   const flashes: Flash[] = [];
   return {
@@ -25,6 +25,11 @@ function context(s: Song, hands: Hand[], bpm = s.bpm): SessionContext {
     flash: (f) => flashes.push(f),
     inputLag: () => 0,
     tuning: TUNING_PRESETS.normal,
+    judging: 'both',
+    learn: DEFAULT_MODE_OPTIONS.learn,
+    roll: { lives: 0, perfectOnly: false, multiplier: true },
+    phraseStart: (beat) => s.measures[Math.max(0, s.measures.findIndex((m) => m.start + m.length > beat))].start,
+    ...extra,
   };
 }
 
@@ -259,5 +264,114 @@ describe('practice settings', () => {
     r2.start(0);
     r2.onNote(press(n.pitch, relaxed.clock.timeAt(n.start) + 90)); // Perfect when relaxed (100)
     expect(r2.judgments().perfect).toBe(1);
+  });
+});
+
+describe('mode customisations', () => {
+  const learnWith = (s: Song, learn: Partial<SessionContext['learn']>, judging: SessionContext['judging'] = 'both') =>
+    context(s, ['R'], s.bpm, { learn: { ...DEFAULT_MODE_OPTIONS.learn, ...learn }, judging });
+
+  it('Learn, rhythm only: any key plays the step', () => {
+    const s = song('ode-to-joy');
+    const c = new LearnController(learnWith(s, {}, 'rhythm'));
+    c.start(0);
+    expect(c.onNote(press(30, 100))).toBe('good');
+    expect(c.targets()).toEqual([64]); // on to the second E
+    expect(c.accuracy()).toBe(1);
+  });
+
+  it('Learn wrong-note rules: ignore, or back to the start of the phrase', () => {
+    const s = song('ode-to-joy');
+    const ignore = new LearnController(learnWith(s, { wrongNote: 'ignore' }));
+    ignore.start(0);
+    expect(ignore.onNote(press(30, 100))).toBe('neutral');
+    expect(ignore.accuracy()).toBe(null);
+
+    const ctx = learnWith(s, { wrongNote: 'restart' });
+    const c = new LearnController(ctx);
+    c.start(0);
+    // Play into bar 2, then a wrong note sends the cursor back to bar 2's start.
+    const steps = buildSteps(ctx.userNotes, new Set(['R']));
+    let t = 100;
+    for (const step of steps.slice(0, 6)) step.pitches.forEach((p) => c.onNote(press(p, (t += 300))));
+    expect(c.clampBeat()).toBe(steps[6].beat);
+    c.onNote(press(30, (t += 300)));
+    expect(c.clampBeat()).toBe(s.measures[1].start);
+  });
+
+  it('Learn, hold notes full length', async () => {
+    const { inputHub } = await import('../input/hub');
+    const s = song('ode-to-joy');
+    const c = new LearnController(learnWith(s, { holdFull: true }));
+    c.start(0);
+    // Let go too soon: the same note again.
+    c.onNote(press(64, 1000));
+    c.update(1050);
+    expect(c.targets()).toEqual([64]);
+    expect(c.stepResults()[0].wrongBefore).toBe(1);
+    // Held: it moves on once the note has sounded long enough (a quarter at 100 bpm, 80%).
+    c.onNote(press(64, 2000));
+    inputHub.held.set(64, press(64, 2000));
+    c.update(2200);
+    expect(c.targets()).toEqual([]); // still holding
+    c.update(2000 + 0.8 * 600 + 10);
+    inputHub.held.delete(64);
+    expect(c.targets()).toEqual([64]); // the next E
+  });
+
+  it('Learn look-ahead lists the next steps', () => {
+    const s = song('ode-to-joy');
+    const c = new LearnController(learnWith(s, {}));
+    c.start(0);
+    expect(c.upcoming(3)).toEqual([[64], [65], [67]]);
+  });
+
+  it('Piano Roll game: lives run out, points multiply with the combo', () => {
+    const s = song('mary-lamb');
+    const ctx = context(s, ['R'], s.bpm, { roll: { lives: 2, perfectOnly: false, multiplier: true } });
+    const r = new RollController(ctx);
+    r.start(0);
+    const n = ctx.userNotes;
+    r.onNote(press(n[0].pitch, ctx.clock.timeAt(n[0].start)));
+    expect(r.judgments().points).toBe(100);
+    expect(r.judgments().lives).toBe(2);
+    r.onNote(press(30, ctx.clock.timeAt(n[1].start)));
+    r.onNote(press(31, ctx.clock.timeAt(n[1].start) + 5));
+    expect(r.judgments().lives).toBe(0);
+    expect(r.judgments().gameOver).toBe(true);
+
+    const ctx2 = context(s, ['R'], s.bpm, { roll: { lives: 0, perfectOnly: true, multiplier: true } });
+    const r2 = new RollController(ctx2);
+    r2.start(0);
+    r2.onNote(press(ctx2.userNotes[0].pitch, ctx2.clock.timeAt(ctx2.userNotes[0].start) + 120)); // good, not perfect
+    expect(r2.judgments()).toMatchObject({ good: 0, miss: 1, points: 0 });
+  });
+
+  it('Piano Roll rhythm only and notes only', () => {
+    const s = song('mary-lamb');
+    const rhythm = context(s, ['R'], s.bpm, { judging: 'rhythm' });
+    const r = new RollController(rhythm);
+    r.start(0);
+    expect(r.onNote(press(30, rhythm.clock.timeAt(rhythm.userNotes[0].start)))).toBe('good');
+
+    const notes = context(s, ['R'], s.bpm, { judging: 'notes' });
+    const r2 = new RollController(notes);
+    r2.start(0);
+    const first = notes.userNotes[0];
+    expect(r2.onNote(press(first.pitch, notes.clock.timeAt(first.start) + 400))).toBe('good');
+    expect(r2.judgments().perfect).toBe(1);
+  });
+
+  it('fading metronome', async () => {
+    const { buildClicks } = await import('./scheduler');
+    const s = song('ode-to-joy');
+    const o = { subdivision: 'beat' as const, accent: true, sound: 'beep' as const };
+    const fade = buildClicks(s, 0, 4, { ...o, fade: 'fade', fadeAfter: 2 });
+    expect(fade.filter((c) => c.beat >= 0).map((c) => c.beat)).toEqual([0, 1, 2, 3, 4, 5, 6, 7]);
+    expect(fade.filter((c) => c.beat < 0)).toHaveLength(4); // the count-in stays
+    const beat1 = buildClicks(s, 0, 4, { ...o, fade: 'beat1' }).filter((c) => c.beat >= 0);
+    expect(beat1.every((c) => c.beat % 4 === 0)).toBe(true);
+    const alt = buildClicks(s, 0, 4, { ...o, fade: 'alternate' }).filter((c) => c.beat >= 0 && c.beat < 16);
+    expect(alt.map((c) => c.beat)).toEqual([0, 1, 2, 3, 8, 9, 10, 11]);
   });
 });

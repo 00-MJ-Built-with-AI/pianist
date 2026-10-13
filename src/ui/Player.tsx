@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { resumeAudio } from '../audio/audio';
-import { piano } from '../audio/piano';
+import { audioCtx, resumeAudio } from '../audio/audio';
+import { metronomeClick, piano } from '../audio/piano';
 import type { KeyKind } from '../engine/controllers';
 import { Session, type Hud } from '../engine/session';
 import { MODE_LABELS, NoteMark, type ModeKind, type Report, type SessionOptions } from '../engine/types';
@@ -20,6 +20,12 @@ import { ScoreView, type ScoreHandle, type ScoreMark } from './ScoreView';
 import { keyNames, transposeRange, transposeSong } from '../music/transpose';
 import { Stage, type StageDisplay } from './stage';
 import { DisplayMenu } from './DisplayMenu';
+import { ModeOptionsMenu } from './ModeOptions';
+import { ViewStrip } from './ViewStrip';
+import { CompareTakes } from './CompareTakes';
+import { addHighScore, highScores, type HighScore } from '../store/highScores';
+import { updateSettings } from '../store/settings';
+import { onKeyboardBase } from '../input/keyboard';
 
 const MODES: ModeKind[] = ['learn', 'practice', 'audition', 'roll', 'listen'];
 
@@ -44,6 +50,20 @@ export interface PlayerPreset {
 }
 
 type WaitMode = 'learn' | 'practice' | 'roll';
+type OtherHand = 'app' | 'mute' | 'hide';
+
+/** What each mode remembers (per piece) when "each mode remembers its setup" is on. */
+interface ModeSetup {
+  hands: Record<Hand, boolean>;
+  otherHand: OtherHand;
+  rate: number;
+  metronome: boolean;
+  loopOn: boolean;
+  loop: { from: number; to: number };
+  autoSpeed: boolean;
+}
+
+const HAND_ORDER: Hand[][] = [['R'], ['L'], ['R', 'L']];
 
 interface Props {
   song: Song;
@@ -55,9 +75,11 @@ interface Props {
   onEdit?: () => void;
   onExit: () => void;
   onSaved?: () => void;
+  /** Every finished run's report (the mock exam collects them). */
+  onReport?: (r: Report) => void;
 }
 
-export function Player({ song: baseSong, queue, preset, nextAction, onNavigate, onEdit, onExit, onSaved }: Props) {
+export function Player({ song: baseSong, queue, preset, nextAction, onNavigate, onEdit, onExit, onSaved, onReport }: Props) {
   const settings = useSettings();
   const id = baseSong.id;
   const [transpose, setTranspose] = useState<number>(() => preset?.transpose ?? loadPref(`transpose.${id}`, 0));
@@ -65,16 +87,38 @@ export function Player({ song: baseSong, queue, preset, nextAction, onNavigate, 
   const song = useMemo(() => transposeSong(baseSong, transpose), [baseSong, transpose]);
   const [tMin, tMax] = useMemo(() => transposeRange(baseSong), [baseSong]);
   const [mode, setMode] = useState<ModeKind>(() => preset?.mode ?? loadPref<ModeKind>('mode', 'learn'));
-  const [hands, setHands] = useState<Record<Hand, boolean>>(() =>
-    preset?.hands ? { R: preset.hands.includes('R'), L: preset.hands.includes('L') } : loadPref(`hands.${id}`, { R: true, L: true }),
+  const setupKey = (m: ModeKind) => `setup.${id}.${m}`;
+  const [initialSetup] = useState<ModeSetup | null>(() =>
+    !preset && getSettings().rememberPerMode ? loadPref<ModeSetup | null>(setupKey(loadPref<ModeKind>('mode', 'learn')), null) : null,
   );
-  const [otherHand, setOtherHand] = useState<'app' | 'mute'>(() => loadPref('otherHand', 'app'));
-  const [rate, setRate] = useState<number>(() => preset?.rate ?? loadPref(`rate.${id}`, 1));
-  const [metronome, setMetronome] = useState(false);
+  const [hands, setHands] = useState<Record<Hand, boolean>>(() =>
+    preset?.hands
+      ? { R: preset.hands.includes('R'), L: preset.hands.includes('L') }
+      : (initialSetup?.hands ?? loadPref(`hands.${id}`, { R: true, L: true })),
+  );
+  const [otherHand, setOtherHand] = useState<OtherHand>(() => initialSetup?.otherHand ?? loadPref<OtherHand>('otherHand', 'app'));
+  const [rate, setRate] = useState<number>(() => preset?.rate ?? initialSetup?.rate ?? loadPref(`rate.${id}`, 1));
+  const [metronome, setMetronome] = useState(() => initialSetup?.metronome ?? false);
   const firstBar = song.measures[0].number === 0 && song.measures.length > 1 ? 1 : 0;
-  const [loopOn, setLoopOn] = useState(!!preset?.loop);
-  const [loop, setLoop] = useState(preset?.loop ?? { from: firstBar, to: Math.min(song.measures.length - 1, firstBar + 3) });
-  const [autoSpeed, setAutoSpeed] = useState(true);
+  const validLoop = (l: { from: number; to: number } | undefined | null) =>
+    l && l.from >= 0 && l.to < song.measures.length && l.from <= l.to ? l : null;
+  const [loopOn, setLoopOn] = useState(() => !!preset?.loop || (!!initialSetup?.loopOn && !!validLoop(initialSetup.loop)));
+  const [loop, setLoop] = useState(
+    () => preset?.loop ?? validLoop(initialSetup?.loop) ?? { from: firstBar, to: Math.min(song.measures.length - 1, firstBar + 3) },
+  );
+  const [autoSpeed, setAutoSpeed] = useState(() => initialSetup?.autoSpeed ?? true);
+  // Stop and fix: the bar being fixed, and the run to carry on with afterwards.
+  const fixRef = useRef<{ bar: number; resume: SessionOptions } | null>(null);
+  const [fixing, setFixing] = useState<number | null>(null);
+  const lastOpts = useRef<SessionOptions | null>(null);
+  const rotateRef = useRef<(next: Hand[], rate: number) => void>(() => {});
+  // Passes across a hands rotation, so "clean passes before speeding up" counts every hand.
+  const rotationPasses = useRef<Array<{ clean: boolean; rate: number }>>([]);
+  // Audition: countdown, restarts used in this audition.
+  const [countdown, setCountdown] = useState<number | null>(null);
+  const [audition, setAudition] = useState<{ open: boolean; restarts: number }>({ open: false, restarts: 0 });
+  const [game, setGame] = useState<{ rank: number | null; scores: HighScore[] } | null>(null);
+  const [comparing, setComparing] = useState(false);
   const [startMeasure, setStartMeasure] = useState(0);
   const coachRef = useRef<{ steps: CoachStep[]; index: number; from: number; to: number } | null>(null);
   const [coach, setCoach] = useState<{ steps: CoachStep[]; index: number } | null>(null);
@@ -105,6 +149,11 @@ export function Player({ song: baseSong, queue, preset, nextAction, onNavigate, 
   const nextSong = queue && queueIndex >= 0 && queueIndex < queue.songs.length - 1 ? queue.songs[queueIndex + 1] : null;
   const userHands = useMemo<Hand[]>(() => (['R', 'L'] as Hand[]).filter((h) => hands[h]), [hands]);
   const bothHands = userHands.length === 2;
+  const hiddenHands = useMemo<Hand[]>(() => (!bothHands && otherHand === 'hide' ? (['R', 'L'] as Hand[]).filter((h) => !hands[h]) : []), [bothHands, otherHand, hands]);
+  const auditionView = settings.modes.audition.view;
+  // While performing an audition, the stage (and the sheet, from memory) can be hidden.
+  const concealStage = mode === 'audition' && running && auditionView !== 'full';
+  const concealScore = mode === 'audition' && running && auditionView === 'memory';
   const showScore = scoreOn[mode] && !!song.scoreXml;
   const loopBeats = loopOn
     ? { start: song.measures[loop.from].start, end: song.measures[loop.to].start + song.measures[loop.to].length }
@@ -120,21 +169,52 @@ export function Player({ song: baseSong, queue, preset, nextAction, onNavigate, 
     idleBeat: -0.5,
     display: settings as StageDisplay,
     preferFlats: false,
+    hiddenHands: [] as Hand[],
+    lookAhead: 0,
+    fingersOnKeys: false,
+    reading: 'off' as 'off' | 'fade' | 'late',
   });
   ui.current = {
-    userHands: mode === 'listen' ? ['R', 'L'] : userHands,
-    showFalling: mode !== 'audition' && settings.showFalling,
+    userHands,
+    showFalling: (mode !== 'audition' || auditionView === 'full') && settings.showFalling,
     hideCues: mode === 'audition',
     rate,
     loopBeats,
     idleBeat: (loopBeats?.start ?? song.measures[Math.min(startMeasure, song.measures.length - 1)].start) - 0.5,
     display: settings,
     preferFlats: song.keyFifths < 0,
+    hiddenHands,
+    lookAhead: mode === 'learn' ? settings.modes.learn.lookAhead : 0,
+    fingersOnKeys: mode === 'learn' && settings.modes.learn.fingersOnKeys,
+    reading: mode === 'roll' ? settings.modes.roll.reading : 'off',
   };
 
   useEffect(() => savePref('mode', mode), [mode]);
   useEffect(() => savePref(`hands.${song.id}`, hands), [hands, song.id]);
   useEffect(() => savePref(`rate.${song.id}`, rate), [rate, song.id]);
+  // Each mode remembers its own setup for this piece (not while the coach or a fix loop drives the toolbar).
+  useEffect(() => {
+    if (!settings.rememberPerMode || coachRef.current || fixRef.current) return;
+    const setup: ModeSetup = { hands, otherHand, rate, metronome, loopOn, loop, autoSpeed };
+    savePref(setupKey(mode), setup);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hands, otherHand, rate, metronome, loopOn, loop, autoSpeed, mode, settings.rememberPerMode]);
+  const switchMode = (m: ModeKind) => {
+    if (m === mode) return;
+    setMode(m);
+    setAudition({ open: false, restarts: 0 });
+    if (!getSettings().rememberPerMode) return;
+    const next = loadPref<ModeSetup | null>(setupKey(m), null);
+    if (!next) return;
+    setHands(next.hands);
+    setOtherHand(next.otherHand);
+    setRate(next.rate);
+    setMetronome(next.metronome);
+    const l = validLoop(next.loop);
+    if (l) setLoop(l);
+    setLoopOn(next.loopOn && !!l);
+    setAutoSpeed(next.autoSpeed);
+  };
   useEffect(() => savePref('otherHand', otherHand), [otherHand]);
   useEffect(() => savePref('scoreOn', scoreOn), [scoreOn]);
   useEffect(() => savePref('waitBy', waitBy), [waitBy]);
@@ -148,6 +228,19 @@ export function Player({ song: baseSong, queue, preset, nextAction, onNavigate, 
       if (!r) return;
       setReport(r);
       setHeat(r.measures);
+      setGame(null);
+      onReport?.(r);
+      if (r.mode === 'audition' && r.completed) setAudition({ open: false, restarts: 0 });
+      // Piano Roll game: the high-score table.
+      if (r.mode === 'roll' && r.judgments?.points !== undefined && s.timed) {
+        const rank = addHighScore(r.songId, { points: r.judgments.points, date: r.date, rate: r.rate, hands: r.hands, maxCombo: r.judgments.maxCombo });
+        setGame({ rank, scores: highScores(r.songId) });
+        if (rank === 0) {
+          setToast(`New high score: ${r.judgments.points.toLocaleString()}!`);
+          celebrate();
+          sfx('levelup');
+        }
+      }
       say(`Score ${r.score}. ${r.tips[0] ?? ''}`);
       try {
         await saveSession(r);
@@ -163,7 +256,7 @@ export function Player({ song: baseSong, queue, preset, nextAction, onNavigate, 
         console.warn('Could not save the session', err);
       }
     },
-    [onSaved],
+    [onSaved, onReport],
   );
 
   const launch = useCallback(
@@ -178,20 +271,40 @@ export function Player({ song: baseSong, queue, preset, nextAction, onNavigate, 
       setHeat(null);
       // Strictness, count-in, metronome and guide settings apply to every run.
       const st = getSettings();
+      lastOpts.current = opts;
       const s = new Session(
         song,
         {
           tuning: tuningOf(st),
           countInBars: st.countInBars,
-          clicks: { subdivision: st.clickSubdivision, accent: st.clickAccent, sound: st.clickSound },
+          clicks: {
+            subdivision: st.clickSubdivision,
+            accent: st.clickAccent,
+            sound: st.clickSound,
+            fade: st.metronomeFade,
+            fadeAfter: st.fadeAfterBars,
+          },
           // Through speakers the microphone would hear the guide notes as the player's own.
           guide: st.guideNotes && (micState().state !== 'on' || st.headphones),
           weights: st.scoreWeights,
+          judging: st.judging,
+          learn: st.modes.learn,
+          practice: { cleanPasses: st.modes.practice.cleanPasses, slowDown: st.modes.practice.slowDown },
+          roll: st.modes.roll,
           ...opts,
         },
         performance.now(),
       );
       let seenPasses = 0;
+      let seenRotation = 0;
+      let seenFix = 0;
+      // Stop and fix (keep-going Practice runs): a mistake loops its bar.
+      s.onMistake((fl) => {
+        if (s.opts.mode !== 'practice' || s.opts.wait || s.opts.loop || fixRef.current || coachRef.current) return;
+        if (!getSettings().modes.practice.stopAndFix) return;
+        const bar = s.currentMeasure(fl.time - 150);
+        window.setTimeout(() => startFixRef.current(bar), 0);
+      });
       let spoken = '';
       s.subscribe(() => {
         if (s.message) setToast(s.message);
@@ -220,6 +333,39 @@ export function Player({ song: baseSong, queue, preset, nextAction, onNavigate, 
             return;
           }
         }
+        // Stop and fix: a clean pass of the bar carries on with the run from there.
+        const fx = fixRef.current;
+        if (fx && s.status === 'running' && s.passList.length > seenFix) {
+          seenFix = s.passList.length;
+          if (s.passList[seenFix - 1].clean) {
+            fixRef.current = null;
+            setFixing(null);
+            setToast(`Bar ${song.measures[fx.bar].number} fixed. Carrying on.`);
+            window.setTimeout(() => void launch({ ...fx.resume, startMeasure: fx.bar, loop: null }), 0);
+            return;
+          }
+        }
+        // Rotate hands: each loop pass moves on to the next hand.
+        const rotate = getSettings().modes.practice.rotateHands;
+        if (!c && !fx && rotate && s.opts.mode === 'practice' && s.opts.loop && s.status === 'running' && s.passList.length > seenRotation) {
+          seenRotation = s.passList.length;
+          const playable = HAND_ORDER.filter((hs) => hs.every((h) => s.allNotes.some((n) => n.hand === h)));
+          const at = playable.findIndex((hs) => hs.length === s.hands.length && hs.every((h) => s.hands.includes(h)));
+          const next = playable[(at + 1) % playable.length];
+          if (next && playable.length > 1) {
+            const last = s.passList[s.passList.length - 1];
+            const hist = rotationPasses.current;
+            hist.push({ clean: last.clean, rate: last.rate });
+            let r = s.rate;
+            const need = getSettings().modes.practice.cleanPasses;
+            const recent = hist.slice(-need);
+            if (need > 1 && s.opts.autoSpeedUp && Math.abs(r - last.rate) < 1e-6 && recent.length === need && recent.every((x) => x.clean && Math.abs(x.rate - r) < 1e-6)) {
+              r = Math.round(Math.min(s.tuning.maxRate, r + s.tuning.speedStep) * 100) / 100;
+            }
+            window.setTimeout(() => rotateRef.current(next, r), 0);
+            return;
+          }
+        }
         if (s.status === 'finished') void finished(s);
       });
       sessionRef.current = s;
@@ -232,10 +378,15 @@ export function Player({ song: baseSong, queue, preset, nextAction, onNavigate, 
 
   const start = useCallback(() => {
     setToast(null);
+    setGame(null);
+    rotationPasses.current = [];
+    fixRef.current = null;
+    setFixing(null);
     return launch({
       mode,
       hands: userHands,
-      otherHand: bothHands ? 'mute' : otherHand,
+      // Listen never plays the hand that's switched off.
+      otherHand: bothHands ? 'mute' : mode === 'listen' && otherHand === 'app' ? 'mute' : otherHand,
       rate,
       metronome,
       loop: loopOn ? loop : null,
@@ -244,6 +395,30 @@ export function Player({ song: baseSong, queue, preset, nextAction, onNavigate, 
       wait,
     });
   }, [launch, mode, userHands, bothHands, otherHand, rate, metronome, loopOn, loop, autoSpeed, wait, startMeasure]);
+
+  rotateRef.current = (next: Hand[], r: number) => {
+    const o = lastOpts.current;
+    if (!o) return;
+    const prev = sessionRef.current;
+    if (prev?.status === 'running') void addPracticeTime(prev.elapsedSec(performance.now())).catch(() => {});
+    setHands({ R: next.includes('R'), L: next.includes('L') });
+    setRate(r);
+    setToast(`Now: ${next.length === 2 ? 'both hands' : next[0] === 'R' ? 'right hand' : 'left hand'}`);
+    void launch({ ...o, hands: next, rate: r, otherHand: next.length === 2 ? 'mute' : o.otherHand === 'mute' && otherHand !== 'mute' ? otherHand : o.otherHand });
+  };
+
+  /** Stop and fix: loop the bar with the mistake until it's clean. */
+  const startFixBar = (bar: number) => {
+    const s = sessionRef.current;
+    const o = lastOpts.current;
+    if (!s || !o || fixRef.current) return;
+    void addPracticeTime(s.elapsedSec(performance.now())).catch(() => {});
+    fixRef.current = { bar, resume: { ...o, rate: s.rate } };
+    setFixing(bar);
+    setToast(`Fix bar ${song.measures[bar].number}: play it cleanly to carry on`);
+    say(`Let's fix bar ${song.measures[bar].number}.`);
+    void launch({ ...o, rate: s.rate, loop: { from: bar, to: bar }, startMeasure: undefined, autoSpeedUp: false });
+  };
 
   // Starts one step of the coach: the toolbar shows the step's settings.
   runStepRef.current = (index: number) => {
@@ -297,6 +472,9 @@ export function Player({ song: baseSong, queue, preset, nextAction, onNavigate, 
 
   const stop = useCallback(() => {
     endCoach();
+    fixRef.current = null;
+    setFixing(null);
+    setCountdown(null);
     const s = sessionRef.current;
     if (s && s.status === 'running') s.stop(performance.now());
     setRunning(false);
@@ -337,6 +515,8 @@ export function Player({ song: baseSong, queue, preset, nextAction, onNavigate, 
       drawn.w = -1;
     });
     ro.observe(canvas);
+    // The computer-key labels move with the octave (Z / X).
+    const offBase = onKeyboardBase(() => (drawn.w = -1));
     let raf = 0;
     let lastHud = 0;
     let lastMarks = 0;
@@ -370,6 +550,10 @@ export function Player({ song: baseSong, queue, preset, nextAction, onNavigate, 
         hideCues: u.hideCues,
         display: u.display,
         preferFlats: u.preferFlats,
+        hiddenHands: u.hiddenHands,
+        upcoming: s ? s.upcoming(u.lookAhead) : [],
+        fingersOnKeys: u.fingersOnKeys,
+        reading: u.reading,
         });
       }
       scoreRef.current?.setBeat(beat);
@@ -414,10 +598,15 @@ export function Player({ song: baseSong, queue, preset, nextAction, onNavigate, 
     return () => {
       cancelAnimationFrame(raf);
       ro.disconnect();
+      offBase();
       sessionRef.current?.dispose();
       sessionRef.current = null;
     };
   }, [song, settings.fullKeyboard]);
+
+  const beginRef = useRef<() => void>(() => {});
+  const startFixRef = useRef(startFixBar);
+  startFixRef.current = startFixBar;
 
   // Hands-free control from the piano.
   useEffect(
@@ -430,17 +619,48 @@ export function Player({ song: baseSong, queue, preset, nextAction, onNavigate, 
           if (live) stop();
           else {
             setReport(null);
-            void start();
+            beginRef.current();
           }
         } else if (a === 'restart') {
           setReport(null);
-          void start();
+          beginRef.current();
         } else if (live && a === 'nextBar') s.nextBar(now);
         else if (live && a === 'prevBar') s.previousBar(now);
         else if (live && a === 'skip' && s.canSkip) s.skip(now);
       }),
-    [start, stop],
+    [stop],
   );
+
+  const auditionOpts = settings.modes.audition;
+  const restartsLeft = auditionOpts.restarts < 0 ? Infinity : auditionOpts.restarts - audition.restarts;
+  const auditionBlocked = mode === 'audition' && audition.open && restartsLeft <= 0 && !running;
+  /** Start, with the audition countdown and restart rules. */
+  const begin = useCallback(() => {
+    if (mode === 'audition') {
+      if (audition.open && restartsLeft <= 0) return;
+      setAudition((a) => (a.open ? { open: true, restarts: a.restarts + 1 } : { open: true, restarts: 0 }));
+      if (auditionOpts.countdown) {
+        setReport(null);
+        setCountdown(3);
+        return;
+      }
+    }
+    void start();
+  }, [mode, audition.open, restartsLeft, auditionOpts.countdown, start]);
+  useEffect(() => {
+    if (countdown === null) return;
+    if (countdown === 0) {
+      setCountdown(null);
+      void start();
+      return;
+    }
+    // A click for each count (the metronome sound, whatever the sound-effects setting).
+    void resumeAudio().then(() => metronomeClick(audioCtx().currentTime + 0.01, countdown === 1 ? 'accent' : 'beat', getSettings().clickSound));
+    const t = window.setTimeout(() => setCountdown((c) => (c === null ? null : c - 1)), 900);
+    return () => window.clearTimeout(t);
+  }, [countdown, start]);
+
+  beginRef.current = begin;
 
   // Space starts / stops, Escape stops or closes the report.
   useEffect(() => {
@@ -450,10 +670,10 @@ export function Player({ song: baseSong, queue, preset, nextAction, onNavigate, 
       const s = sessionRef.current;
       if (e.code === 'Space') {
         e.preventDefault();
-        if (running) stop();
-        else if (!report) void start();
+        if (running || countdown !== null) stop();
+        else if (!report) begin();
       } else if (e.code === 'Escape') {
-        if (running) stop();
+        if (running || countdown !== null) stop();
         else if (report) setReport(null);
       } else if (e.code === 'ArrowLeft' || e.code === 'ArrowRight') {
         e.preventDefault();
@@ -471,7 +691,7 @@ export function Player({ song: baseSong, queue, preset, nextAction, onNavigate, 
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [running, report, start, stop, loopOn, song]);
+  }, [running, report, begin, stop, loopOn, song, countdown]);
 
   useEffect(() => {
     if (!toast) return;
@@ -550,11 +770,6 @@ export function Player({ song: baseSong, queue, preset, nextAction, onNavigate, 
 
   const scoreLoop = loopOn ? loop : null;
   const heatData = !running && heat ? heat.map((m) => ({ index: m.index, score: m.score })) : null;
-  const toggleHand = (h: Hand) => {
-    const next = { ...hands, [h]: !hands[h] };
-    if (!next.R && !next.L) next[h === 'R' ? 'L' : 'R'] = true;
-    setHands(next);
-  };
 
   return (
     <div className="player">
@@ -598,7 +813,7 @@ export function Player({ song: baseSong, queue, preset, nextAction, onNavigate, 
               key={m}
               className={`tab ${mode === m ? 'active' : ''}`}
               disabled={running}
-              onClick={() => setMode(m)}
+              onClick={() => switchMode(m)}
             >
               {MODE_LABELS[m]}
             </button>
@@ -608,9 +823,24 @@ export function Player({ song: baseSong, queue, preset, nextAction, onNavigate, 
       </header>
 
       <div className="toolbar">
-        <button className={`btn start ${running ? 'stop' : 'primary'}`} onClick={running ? stop : () => void start()}>
-          {running ? '■ Stop' : mode === 'listen' ? '▶ Listen' : '▶ Start'}
+        <button
+          className={`btn start ${running || countdown !== null ? 'stop' : 'primary'}`}
+          disabled={auditionBlocked}
+          onClick={running || countdown !== null ? stop : begin}
+          title={auditionBlocked ? 'No restarts left in this audition' : undefined}
+        >
+          {running || countdown !== null ? '■ Stop' : mode === 'listen' ? '▶ Listen' : mode === 'audition' && audition.open ? '↺ Restart' : '▶ Start'}
         </button>
+        {mode === 'audition' && audition.open && auditionOpts.restarts >= 0 && (
+          <span className="muted small" title="Restarts allowed in Audition options">
+            {restartsLeft > 0 ? `${restartsLeft} restart${restartsLeft > 1 ? 's' : ''} left` : 'No restarts left'}
+            {!running && (
+              <button className="btn ghost small-btn" onClick={() => setAudition({ open: false, restarts: 0 })}>
+                New audition
+              </button>
+            )}
+          </span>
+        )}
         {running ? (
           <div className="group transport" title="Move while playing (← → keys)">
             <button className="seg" onClick={() => sessionRef.current?.previousBar(performance.now())} aria-label="Previous bar">
@@ -645,26 +875,49 @@ export function Player({ song: baseSong, queue, preset, nextAction, onNavigate, 
           )
         )}
 
-        {mode !== 'listen' && (
-          <div className="group" title="Which hands you play">
-            <span className="label">Hands</span>
-            <button className={`seg ${hands.L ? 'on l' : ''}`} disabled={running} onClick={() => toggleHand('L')}>
-              Left
-            </button>
-            <button className={`seg ${hands.R ? 'on r' : ''}`} disabled={running} onClick={() => toggleHand('R')}>
-              Right
-            </button>
-            {!bothHands && (
-              <select
-                value={otherHand}
-                disabled={running}
-                onChange={(e) => setOtherHand(e.target.value as 'app' | 'mute')}
-                title="What happens to the other hand's part"
-              >
-                <option value="app">other hand: app plays</option>
-                <option value="mute">other hand: silent</option>
-              </select>
+        <div className="group" title={mode === 'listen' ? 'Which hands you hear' : 'Which hands you play'}>
+          <span className="label">{mode === 'listen' ? 'Hear' : 'You play'}</span>
+          <button className={`seg ${hands.L && !hands.R ? 'on l' : ''}`} disabled={running} onClick={() => setHands({ L: true, R: false })}>
+            Left
+          </button>
+          <button className={`seg ${bothHands ? 'on r' : ''}`} disabled={running} onClick={() => setHands({ L: true, R: true })}>
+            Both
+          </button>
+          <button className={`seg ${hands.R && !hands.L ? 'on r' : ''}`} disabled={running} onClick={() => setHands({ L: false, R: true })}>
+            Right
+          </button>
+        </div>
+        {!bothHands && (
+          <div className="group" title="The other hand's part">
+            <span className="label">Other hand</span>
+            {mode !== 'listen' && (
+              <button className={`seg ${otherHand === 'app' ? 'on r' : ''}`} disabled={running} onClick={() => setOtherHand('app')}>
+                Pianist plays
+              </button>
             )}
+            <button
+              className={`seg ${otherHand === 'mute' || (mode === 'listen' && otherHand === 'app') ? 'on r' : ''}`}
+              disabled={running}
+              onClick={() => setOtherHand('mute')}
+            >
+              {mode === 'listen' ? 'Shown' : 'Silent'}
+            </button>
+            <button className={`seg ${otherHand === 'hide' ? 'on r' : ''}`} disabled={running} onClick={() => setOtherHand('hide')}>
+              Hidden
+            </button>
+          </div>
+        )}
+        {((!bothHands && otherHand === 'app' && mode !== 'listen') || mode === 'listen') && (
+          <div className="group" title={mode === 'listen' ? 'Volume' : "Volume of the hand Pianist plays"}>
+            <span className="label">{mode === 'listen' ? 'Volume' : 'Its volume'}</span>
+            <input
+              type="range"
+              min={0}
+              max={1}
+              step={0.05}
+              value={settings.accompVolume}
+              onChange={(e) => updateSettings({ accompVolume: Number(e.target.value) })}
+            />
           </div>
         )}
 
@@ -764,6 +1017,17 @@ export function Player({ song: baseSong, queue, preset, nextAction, onNavigate, 
         </div>
 
         <span className="spacer" />
+        <ModeOptionsMenu
+          mode={mode}
+          extra={
+            mode === 'roll' ? (
+              <div className="mode-opt column">
+                <b>High scores</b>
+                <HighScoreList scores={highScores(song.id)} />
+              </div>
+            ) : null
+          }
+        />
         <DisplayMenu />
         {song.scoreXml && (
           <button
@@ -776,7 +1040,9 @@ export function Player({ song: baseSong, queue, preset, nextAction, onNavigate, 
         )}
       </div>
 
-      {showScore && (
+      <ViewStrip hasScore={!!song.scoreXml} />
+
+      {showScore && !concealScore && (
         <ScoreView
           ref={scoreRef}
           song={song}
@@ -791,14 +1057,25 @@ export function Player({ song: baseSong, queue, preset, nextAction, onNavigate, 
       <div className="stage-wrap">
         <canvas
           ref={canvasRef}
-          className="stage"
+          className={`stage ${concealStage ? 'concealed' : ''}`}
           onPointerDown={onPointerDown}
           onPointerMove={onPointerMove}
           onPointerUp={onPointerUp}
           onPointerCancel={onPointerUp}
         />
+        {concealStage && (
+          <div className="concealed-note">
+            {auditionView === 'memory' ? '🎭 Playing from memory' : '🎼 Reading from the sheet music'}
+            <div className="muted small">Your report comes at the end.</div>
+          </div>
+        )}
+        {countdown !== null && countdown > 0 && (
+          <div className="countdown" key={countdown}>
+            {countdown}
+          </div>
+        )}
         <div className="hud">
-          {running && hud && <HudView mode={mode} hud={hud} />}
+          {running && hud && <HudView mode={mode} hud={hud} best={mode === 'roll' ? (highScores(song.id)[0]?.points ?? 0) : 0} />}
           {!running && !report && (
             <div className="hint">
               <b>{MODE_LABELS[mode]}.</b> {canWait && !wait ? KEEP_GOING_HELP : MODE_HELP[mode]}
@@ -811,6 +1088,29 @@ export function Player({ song: baseSong, queue, preset, nextAction, onNavigate, 
           )}
         </div>
         {toast && <div className="toast">{toast}</div>}
+        {fixing !== null && (
+          <div className="coach-banner">
+            <div className="coach-text">
+              <b>🔧 Fixing bar {song.measures[fixing].number}</b>
+              <span className="muted small">Play it cleanly once and the run carries on from here.</span>
+            </div>
+            <button
+              className="btn"
+              onClick={() => {
+                const fx = fixRef.current;
+                if (!fx) return;
+                fixRef.current = null;
+                setFixing(null);
+                void launch({ ...fx.resume, startMeasure: fx.bar, loop: null });
+              }}
+            >
+              Carry on
+            </button>
+            <button className="btn ghost" onClick={stop}>
+              Stop
+            </button>
+          </div>
+        )}
         {coach && (
           <div className="coach-banner">
             <div className="coach-dots">
@@ -856,6 +1156,7 @@ export function Player({ song: baseSong, queue, preset, nextAction, onNavigate, 
           onClose={() => setCoachDialog(false)}
         />
       )}
+      {comparing && report && <CompareTakes report={report} onClose={() => setComparing(false)} />}
       {report && (
         <ReportView
           report={report}
@@ -864,8 +1165,10 @@ export function Player({ song: baseSong, queue, preset, nextAction, onNavigate, 
           onPracticeBars={practiceBars}
           onAgain={() => {
             setReport(null);
-            void start();
+            begin();
           }}
+          onCompare={report.mode === 'audition' ? () => setComparing(true) : undefined}
+          game={game}
           onFix={() => startFix(report)}
           onNext={nextSong ? () => onNavigate?.(nextSong) : nextAction?.run}
           nextTitle={nextSong?.title ?? nextAction?.label}
@@ -875,10 +1178,38 @@ export function Player({ song: baseSong, queue, preset, nextAction, onNavigate, 
   );
 }
 
-function HudView({ mode, hud }: { mode: ModeKind; hud: Hud }) {
+function HighScoreList({ scores }: { scores: HighScore[] }) {
+  if (!scores.length) return <span className="muted small">No games yet. Play Piano Roll at tempo (Keep going).</span>;
+  return (
+    <ol className="high-scores">
+      {scores.map((h, i) => (
+        <li key={h.date + i}>
+          <b>{h.points.toLocaleString()}</b>{' '}
+          <span className="muted small">
+            {new Date(h.date).toLocaleDateString(undefined, { day: 'numeric', month: 'short' })} · {Math.round(h.rate * 100)}% · combo {h.maxCombo}
+          </span>
+        </li>
+      ))}
+    </ol>
+  );
+}
+
+function HudView({ mode, hud, best }: { mode: ModeKind; hud: Hud; best: number }) {
   const pct = hud.accuracy === null ? '—' : `${Math.round(hud.accuracy * 100)}%`;
+  if (hud.demo) return <div className="hud-line">👂 Listen… then it's your turn</div>;
   if (mode === 'listen') return <div className="hud-line">Listening at {Math.round(hud.rate * 100)}%</div>;
   if (mode === 'audition') return <div className="hud-line rec">● Performing. Feedback comes at the end.</div>;
+  if (hud.timed && mode === 'roll') {
+    return (
+      <div className="hud-line">
+        <b className="points">{hud.points.toLocaleString()}</b> pts
+        {hud.multiplier > 1 && <span className="combo"> ×{hud.multiplier}</span>}
+        {hud.lives !== null && <span className="lives"> · {'♥'.repeat(hud.lives)}</span>} · <span className="combo">{hud.combo}</span> combo ·{' '}
+        <b>{hud.perfect}</b> perfect · <b>{hud.good}</b> good · <b>{hud.miss}</b> miss
+        {best > 0 && <span className="muted"> · best {best.toLocaleString()}</span>}
+      </div>
+    );
+  }
   if (hud.timed) {
     return (
       <div className="hud-line">

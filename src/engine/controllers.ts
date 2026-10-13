@@ -2,8 +2,8 @@ import { inputHub, type PlayedNote } from '../input/hub';
 import { buildSteps, type Region, type Step } from '../music/steps';
 import type { Hand, Note } from '../music/types';
 import type { Clock } from './clock';
-import type { Tuning } from '../store/settings';
-import { NoteMark, type ExtraNote, type StepResult } from './types';
+import type { ModeOptions, Tuning } from '../store/settings';
+import { NoteMark, type ExtraNote, type Judging, type StepResult } from './types';
 
 export type KeyKind = 'good' | 'wrong' | 'neutral';
 
@@ -28,6 +28,11 @@ export interface SessionContext {
   flash(f: Flash): void;
   /** How late key presses arrive (the microphone detector reports notes ~0.25 s after they sound). */
   inputLag(): number;
+  judging: Judging;
+  learn: ModeOptions['learn'];
+  roll: { lives: number; perfectOnly: boolean; multiplier: boolean };
+  /** Start of the phrase a beat is in (for "back to the start of the phrase"). */
+  phraseStart(beat: number): number;
 }
 
 export interface Judgments {
@@ -37,6 +42,11 @@ export interface Judgments {
   wrong: number;
   combo: number;
   maxCombo: number;
+  /** Game rules (Piano Roll): points, lives left (null = no lives), and the combo multiplier. */
+  points: number;
+  lives: number | null;
+  multiplier: number;
+  gameOver: boolean;
 }
 
 export interface Controller {
@@ -57,6 +67,8 @@ export interface Controller {
   seek(beat: number, now: number): void;
   /** Give up on the notes the cursor is waiting for (they count as missed) and move on. */
   skip?(now: number): void;
+  /** Pitches of the next steps after the current one (nearest first). */
+  upcoming?(count: number): number[][];
 }
 
 const firstAtOrAfter = <T extends { beat?: number; start?: number }>(xs: T[], beat: number) => {
@@ -92,6 +104,8 @@ export class LearnController implements Controller {
   private extraNotes: ExtraNote[] = [];
   private correct = 0;
   private wrong = 0;
+  /** Hold-full-length: the step's keys are down; it counts once they've been held until `until`. */
+  private holding: { until: number; mic: boolean } | null = null;
 
   constructor(private ctx: SessionContext) {
     this.steps = buildSteps(ctx.userNotes, new Set(ctx.hands));
@@ -99,6 +113,7 @@ export class LearnController implements Controller {
 
   start(now: number): void {
     this.idx = 0;
+    this.holding = null;
     this.hits.clear();
     this.results = this.steps.map(emptyResult);
     this.extraNotes = [];
@@ -108,6 +123,8 @@ export class LearnController implements Controller {
   }
 
   clampBeat(): number {
+    // While a note is held to its full length the cursor moves on through it.
+    if (this.holding) return this.steps[this.idx + 1]?.beat ?? this.ctx.region.endBeat;
     return this.steps[this.idx]?.beat ?? Infinity;
   }
 
@@ -116,17 +133,35 @@ export class LearnController implements Controller {
   }
 
   waiting(now: number): boolean {
-    return this.idx < this.steps.length && this.ctx.clock.beatAt(now) >= this.clampBeat();
+    return this.idx < this.steps.length && !this.holding && this.ctx.clock.beatAt(now) >= this.clampBeat();
   }
 
   targets(): number[] {
     const step = this.steps[this.idx];
-    return step ? step.pitches.filter((p) => !this.hits.has(p)) : [];
+    return step && !this.holding ? step.pitches.filter((p) => !this.hits.has(p)) : [];
+  }
+
+  upcoming(count: number): number[][] {
+    return this.steps.slice(this.idx + 1, this.idx + 1 + count).map((s) => s.pitches);
   }
 
   onNote(n: PlayedNote): KeyKind {
+    // Legato into the next note while holding: fine once the hold is nearly done.
+    if (this.holding && n.time >= this.holding.until - 150) this.completeHold(n.time);
     const step = this.steps[this.idx];
     if (!step) return 'neutral';
+    if (this.holding) return step.pitches.includes(n.pitch) ? 'good' : 'neutral';
+    // Rhythm only: any key plays the whole step.
+    if (this.ctx.judging === 'rhythm') {
+      const res = this.results[this.idx];
+      for (const p of step.pitches) {
+        this.hits.set(p, n.time);
+        res.played.push({ pitch: p, time: n.time, velocity: n.velocity });
+      }
+      this.correct += step.pitches.length;
+      this.stepDone(n.time, n.source === 'mic');
+      return 'good';
+    }
     if (step.pitches.includes(n.pitch)) {
       // A chord counts when its notes arrive within a second of each other (or are still held).
       const win = this.ctx.tuning.chordWindowMs;
@@ -136,14 +171,50 @@ export class LearnController implements Controller {
       res.played = res.played.filter((x) => x.pitch !== n.pitch);
       res.played.push({ pitch: n.pitch, time: n.time, velocity: n.velocity });
       this.correct++;
-      if (step.pitches.every((p) => this.hits.has(p))) this.advance(n.time);
+      if (step.pitches.every((p) => this.hits.has(p))) this.stepDone(n.time, n.source === 'mic');
       return 'good';
     }
-    this.wrong++;
-    this.results[this.idx].wrongBefore++;
-    this.extraNotes.push({ pitch: n.pitch, time: n.time, measure: step.measure, beat: step.beat });
+    const rule = this.ctx.learn.wrongNote;
+    if (rule === 'ignore') return 'neutral';
+    if (rule !== 'flash') {
+      this.wrong++;
+      this.results[this.idx].wrongBefore++;
+      this.extraNotes.push({ pitch: n.pitch, time: n.time, measure: step.measure, beat: step.beat });
+    }
+    if (rule === 'restart') {
+      // Back to the start of the phrase.
+      this.ctx.flash({ pitch: n.pitch, kind: 'wrong', label: 'Again', time: n.time });
+      this.seek(this.ctx.phraseStart(step.beat), n.time);
+      return 'wrong';
+    }
     this.ctx.flash({ pitch: n.pitch, kind: 'wrong', time: n.time });
     return 'wrong';
+  }
+
+  /** All of the step's notes are down: move on, or first hold them for their written length. */
+  private stepDone(t: number, mic: boolean) {
+    const step = this.steps[this.idx];
+    if (this.ctx.learn.holdFull) {
+      const beats = Math.min(...step.notes.map((x) => x.dur));
+      const ms = Math.min(6000, ((beats / this.ctx.targetBps) * 1000) * 0.8);
+      if (ms >= 250) {
+        this.holding = { until: t + ms, mic };
+        // The cursor runs on through the held note.
+        this.ctx.clock.anchor(step.beat, t);
+        return;
+      }
+    }
+    this.advance(t);
+  }
+
+  private completeHold(t: number) {
+    const step = this.steps[this.idx];
+    this.holding = null;
+    this.results[this.idx].waitedMs = 0;
+    markStep(this.ctx, step, null, NoteMark.Hit);
+    this.hits.clear();
+    this.idx++;
+    this.lastAdvance = t;
   }
 
   private advance(t: number) {
@@ -163,6 +234,7 @@ export class LearnController implements Controller {
 
   seek(beat: number, now: number): void {
     this.idx = firstAtOrAfter(this.steps, beat);
+    this.holding = null;
     this.hits.clear();
     for (let k = this.idx; k < this.steps.length; k++) {
       this.results[k] = emptyResult(this.steps[k]);
@@ -184,7 +256,24 @@ export class LearnController implements Controller {
     this.ctx.clock.anchor(step.beat, now);
   }
 
-  update(): void {}
+  update(now: number): void {
+    const h = this.holding;
+    if (!h) return;
+    const step = this.steps[this.idx];
+    // The microphone can't tell reliably when a key is let go, so only the time counts there.
+    const held = h.mic || inputHub.pedal || step.pitches.every((p) => inputHub.held.has(p));
+    if (!held) {
+      // Let go too soon: play it again and hold it.
+      this.holding = null;
+      this.hits.clear();
+      this.wrong++;
+      this.results[this.idx].wrongBefore++;
+      for (const p of step.pitches) this.ctx.flash({ pitch: p, kind: 'miss', label: 'Hold it', time: now });
+      this.ctx.clock.anchor(step.beat, now);
+    } else if (now >= h.until) {
+      this.completeHold(now);
+    }
+  }
 
   isComplete(now: number): boolean {
     return this.idx >= this.steps.length && this.ctx.clock.beatAt(now) >= this.ctx.region.endBeat;
@@ -274,6 +363,12 @@ export class FollowController implements Controller {
 
   onNote(n: PlayedNote): KeyKind {
     this.lastInput = n.time;
+    // Rhythm only: any key plays the next step.
+    if (this.ctx.judging === 'rhythm' && this.pos < this.steps.length) {
+      const j = this.pos;
+      for (const p of this.steps[j].pitches) if (!this.matched[j].has(p)) this.match(j, { ...n, pitch: p });
+      return 'good';
+    }
     const p = n.pitch;
     // A chord note that arrives just after its neighbours moved the cursor on.
     if (this.pos > 0) {
@@ -416,6 +511,11 @@ export class FollowController implements Controller {
   reached(): number {
     return this.pos;
   }
+
+  upcoming(count: number): number[][] {
+    if (this.hideCues) return [];
+    return this.steps.slice(this.pos + 1, this.pos + 1 + count).map((s) => s.pitches);
+  }
 }
 
 /* ---------------------------------------------------------------- Piano Roll (flowing, judged) */
@@ -429,7 +529,29 @@ export class RollController implements Controller {
   private extraNotes: ExtraNote[] = [];
   private matched = new Set<number>();
   private missPtr = 0;
-  private j: Judgments = { perfect: 0, good: 0, miss: 0, wrong: 0, combo: 0, maxCombo: 0 };
+  private j: Judgments = this.freshJudgments();
+
+  private freshJudgments(): Judgments {
+    const lives = this.ctx?.roll?.lives || 0;
+    return { perfect: 0, good: 0, miss: 0, wrong: 0, combo: 0, maxCombo: 0, points: 0, lives: lives > 0 ? lives : null, multiplier: 1, gameOver: false };
+  }
+
+  /** A miss or wrong note: the combo breaks and a life is lost. */
+  private slip() {
+    this.j.combo = 0;
+    this.j.multiplier = 1;
+    if (this.j.lives !== null) {
+      this.j.lives = Math.max(0, this.j.lives - 1);
+      if (this.j.lives === 0) this.j.gameOver = true;
+    }
+  }
+
+  private score(points: number) {
+    this.j.combo++;
+    this.j.maxCombo = Math.max(this.j.maxCombo, this.j.combo);
+    this.j.multiplier = this.ctx.roll.multiplier ? Math.min(4, 1 + Math.floor(this.j.combo / 10)) : 1;
+    this.j.points += points * this.j.multiplier;
+  }
 
   constructor(private ctx: SessionContext) {
     this.notes = ctx.userNotes.filter((n) => ctx.hands.includes(n.hand));
@@ -442,7 +564,7 @@ export class RollController implements Controller {
     this.missPtr = 0;
     this.results = this.steps.map(emptyResult);
     this.extraNotes = [];
-    this.j = { perfect: 0, good: 0, miss: 0, wrong: 0, combo: 0, maxCombo: 0 };
+    this.j = this.freshJudgments();
     this.ctx.clock.bps = this.ctx.targetBps;
     this.ctx.clock.start(this.ctx.region.startBeat - this.ctx.leadIn, now);
   }
@@ -471,21 +593,34 @@ export class RollController implements Controller {
 
   onNote(n: PlayedNote): KeyKind {
     const clock = this.ctx.clock;
+    const judging = this.ctx.judging;
+    // Notes only: any timing within about half a second counts.
+    const goodMs = judging === 'notes' ? Math.max(this.ctx.tuning.goodMs, 600) : this.ctx.tuning.goodMs;
     let best: Note | null = null;
     let bestDev = Infinity;
     for (const note of this.notes) {
-      if (note.pitch !== n.pitch || this.matched.has(note.id)) continue;
+      // Rhythm only: any key counts for the note that's due.
+      if ((judging !== 'rhythm' && note.pitch !== n.pitch) || this.matched.has(note.id)) continue;
       const dev = n.time - clock.timeAt(note.start);
-      const goodMs = this.ctx.tuning.goodMs;
       if (dev < -goodMs) break;
       if (Math.abs(dev) <= goodMs && Math.abs(dev) < Math.abs(bestDev)) {
         best = note;
         bestDev = dev;
       }
     }
+    if (best && judging === 'rhythm') {
+      // A chord is one tap: every note starting with it counts.
+      for (const other of this.notes) {
+        if (other.id !== best.id && Math.abs(other.start - best.start) < 1e-6 && !this.matched.has(other.id)) {
+          this.matched.add(other.id);
+          this.ctx.marks[other.id] = NoteMark.Hit;
+          this.results[this.stepOf.get(other.id)!].played.push({ pitch: other.pitch, time: n.time, velocity: n.velocity });
+        }
+      }
+    }
     if (!best) {
       this.j.wrong++;
-      this.j.combo = 0;
+      this.slip();
       const beat = clock.beatAt(n.time);
       const measure = this.notes.find((x) => x.start + x.dur > beat)?.measure ?? 0;
       this.extraNotes.push({ pitch: n.pitch, time: n.time, measure, beat });
@@ -494,12 +629,20 @@ export class RollController implements Controller {
     }
     this.matched.add(best.id);
     const si = this.stepOf.get(best.id)!;
-    this.results[si].played.push({ pitch: n.pitch, time: n.time, velocity: n.velocity });
-    const perfect = Math.abs(bestDev) <= this.ctx.tuning.perfectMs;
+    this.results[si].played.push({ pitch: best.pitch, time: n.time, velocity: n.velocity });
+    const perfect = judging === 'notes' || Math.abs(bestDev) <= this.ctx.tuning.perfectMs;
+    if (!perfect && this.ctx.roll.perfectOnly) {
+      // Perfect-only challenge: anything less is a miss.
+      this.j.miss++;
+      this.slip();
+      this.ctx.marks[best.id] = NoteMark.Missed;
+      this.results[si].missed.push(best.pitch);
+      this.ctx.flash({ pitch: n.pitch, kind: 'miss', label: bestDev < 0 ? 'Early' : 'Late', time: n.time });
+      return 'wrong';
+    }
     if (perfect) this.j.perfect++;
     else this.j.good++;
-    this.j.combo++;
-    this.j.maxCombo = Math.max(this.j.maxCombo, this.j.combo);
+    this.score(perfect ? 100 : 50);
     this.ctx.marks[best.id] = perfect ? NoteMark.Hit : bestDev < 0 ? NoteMark.Early : NoteMark.Late;
     this.ctx.flash({
       pitch: n.pitch,
@@ -519,7 +662,7 @@ export class RollController implements Controller {
       this.missPtr++;
       if (this.matched.has(note.id)) continue;
       this.j.miss++;
-      this.j.combo = 0;
+      this.slip();
       this.ctx.marks[note.id] = NoteMark.Missed;
       this.results[this.stepOf.get(note.id)!].missed.push(note.pitch);
       this.ctx.flash({ pitch: note.pitch, kind: 'miss', label: 'Miss', time: now });
@@ -587,12 +730,13 @@ export class ListenController implements Controller {
     return false;
   }
 
+  /** The keys of the hands being heard light up as they sound. */
   targets(now: number): number[] {
     const beat = this.ctx.clock.beatAt(now);
     const out: number[] = [];
     for (const n of this.ctx.allNotes) {
       if (n.start > beat) break;
-      if (n.start + n.dur > beat) out.push(n.pitch);
+      if (n.start + n.dur > beat && this.ctx.hands.includes(n.hand)) out.push(n.pitch);
     }
     return out;
   }
@@ -606,11 +750,12 @@ export class ListenController implements Controller {
     this.ctx.clock.start(beat, now);
   }
 
+  /** Notes of the heard hands turn lighter once they've sounded; a silent hand stays grey. */
   update(now: number): void {
     const beat = this.ctx.clock.beatAt(now);
     for (const n of this.ctx.allNotes) {
       if (n.start > beat) break;
-      this.ctx.marks[n.id] = NoteMark.Auto;
+      if (this.ctx.hands.includes(n.hand)) this.ctx.marks[n.id] = NoteMark.Hit;
     }
   }
 

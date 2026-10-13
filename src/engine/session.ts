@@ -1,3 +1,4 @@
+import { perfToAudio } from '../audio/audio';
 import { piano } from '../audio/piano';
 import { inputHub, type InputSource, type PlayedNote } from '../input/hub';
 import { micLag } from '../input/mic/mic';
@@ -18,7 +19,8 @@ import {
 } from './controllers';
 import { ClickScheduler, NoteScheduler, buildClicks } from './scheduler';
 import { NoteMark, type PassSummary, type RecordedEvent, type Report, type SessionOptions } from './types';
-import { TUNING_PRESETS, type Tuning } from '../store/settings';
+import { DEFAULT_MODE_OPTIONS, TUNING_PRESETS, type ModeOptions, type Tuning } from '../store/settings';
+import type { Judging } from './types';
 
 export interface Hud {
   accuracy: number | null;
@@ -33,6 +35,12 @@ export interface Hud {
   waiting: boolean;
   timed: boolean;
   status: Session['status'];
+  /** Piano Roll game rules. */
+  points: number;
+  lives: number | null;
+  multiplier: number;
+  /** Hear it first: Pianist is playing the phrase. */
+  demo: boolean;
 }
 
 
@@ -47,6 +55,9 @@ export class Session implements SessionContext {
   readonly marks: Uint8Array;
   readonly leadIn: number;
   readonly tuning: Tuning;
+  readonly judging: Judging;
+  readonly learn: ModeOptions['learn'];
+  readonly roll: { lives: number; perfectOnly: boolean; multiplier: boolean };
   targetBps: number;
   rate: number;
   metronome: boolean;
@@ -78,20 +89,25 @@ export class Session implements SessionContext {
       : opts.startMeasure
         ? regionFor(song, opts.startMeasure, song.measures.length - 1)
         : wholeSong(song);
-    this.hands = opts.mode === 'listen' ? ['R', 'L'] : opts.hands;
+    this.hands = opts.hands;
     this.rate = opts.rate;
     this.metronome = opts.metronome;
     this.targetBps = (song.bpm * this.rate) / 60;
     const inRegion = (n: Note) => n.start >= this.region.startBeat - 1e-6 && n.start < this.region.endBeat - 1e-6;
     this.allNotes = song.notes.filter(inRegion);
     this.userNotes = opts.mode === 'listen' ? [] : this.allNotes.filter((n) => this.hands.includes(n.hand));
+    // Listen plays the chosen hands; otherwise Pianist may play the hand the player leaves out.
     const appNotes =
       opts.mode === 'listen'
-        ? this.allNotes
+        ? this.allNotes.filter((n) => this.hands.includes(n.hand))
         : opts.otherHand === 'app'
           ? this.allNotes.filter((n) => !this.hands.includes(n.hand))
           : [];
     this.tuning = opts.tuning ?? TUNING_PRESETS.normal;
+    this.judging = opts.judging ?? 'both';
+    this.learn = opts.learn ?? DEFAULT_MODE_OPTIONS.learn;
+    this.roll = opts.roll ?? { lives: 0, perfectOnly: false, multiplier: false };
+    this.hearFirstBars = opts.mode === 'learn' && opts.wait ? this.learn.hearFirst : 0;
     this.marks = new Uint8Array(song.notes.length);
     for (const n of appNotes) this.marks[n.id] = NoteMark.Auto;
 
@@ -105,6 +121,7 @@ export class Session implements SessionContext {
     this.controller = this.makeController();
     this.appSched = new NoteScheduler(appNotes);
     this.clickSched = new ClickScheduler(buildClicks(song, this.region.startBeat, this.leadIn, opts.clicks), opts.clicks?.sound);
+
     this.guideSched = opts.guide && opts.mode !== 'listen' ? new NoteScheduler(this.userNotes, 'guide', true) : null;
 
     this.unsubs.push(
@@ -145,6 +162,58 @@ export class Session implements SessionContext {
 
   /** Clicks before this beat are a count-in and sound even with the metronome off. */
   private countInUntil = 0;
+
+  /* ---- Hear it first: Pianist plays each phrase, then waits for the player to play it. */
+  private hearFirstBars = 0;
+  private demo: { from: number; to: number; start: number; end: number } | null = null;
+  private demoDone = -1;
+
+  private phraseIndex(beat: number): number {
+    const m = measureIndexAt(this.song.measures, Math.max(this.region.startBeat, beat));
+    return Math.floor((m - this.region.fromMeasure) / Math.max(1, this.hearFirstBars || 1));
+  }
+
+  phraseStart(beat: number): number {
+    const bars = Math.max(1, this.hearFirstBars || 1);
+    const m = measureIndexAt(this.song.measures, Math.max(this.region.startBeat, beat));
+    const first = this.region.fromMeasure + Math.floor((m - this.region.fromMeasure) / bars) * bars;
+    return Math.max(this.region.startBeat, this.song.measures[first].start);
+  }
+
+  private startDemo(phrase: number, now: number) {
+    const bars = this.hearFirstBars;
+    const fromM = this.region.fromMeasure + phrase * bars;
+    const toM = Math.min(this.region.toMeasure, fromM + bars - 1);
+    const from = Math.max(this.region.startBeat, this.song.measures[fromM].start);
+    const to = Math.min(this.region.endBeat, this.song.measures[toM].start + this.song.measures[toM].length);
+    this.demoDone = phrase;
+    piano.stopAll('accomp');
+    piano.stopAll('guide');
+    const start = now + 500;
+    const bps = this.targetBps;
+    // The player's part, and the other hand too when Pianist plays it.
+    const notes = this.opts.otherHand === 'app' ? this.allNotes : this.userNotes;
+    for (const n of notes) {
+      if (n.start < from - 1e-6 || n.start >= to - 1e-6) continue;
+      piano.noteOn(n.pitch, n.velocity, { when: perfToAudio(start + ((n.start - from) / bps) * 1000), duration: (n.dur / bps) * 0.98, bus: 'accomp' });
+    }
+    this.demo = { from, to, start, end: start + ((to - from) / bps) * 1000 };
+    const a = this.song.measures[fromM].number;
+    const b = this.song.measures[toM].number;
+    this.message = `Listen: ${a === b ? `bar ${a}` : `bars ${a}–${b}`}`;
+    this.emit();
+  }
+
+  private endDemo(now: number) {
+    const from = this.demo!.from;
+    this.demo = null;
+    this.controller.seek(from, now);
+    this.appSched.reset(from);
+    this.guideSched?.reset(from);
+    this.clickSched.reset(this.clock.beatAt(now));
+    this.message = 'Your turn';
+    this.emit();
+  }
 
   /** Bar the cursor is in. */
   currentMeasure(now: number): number {
@@ -201,6 +270,15 @@ export class Session implements SessionContext {
 
   flash(f: Flash): void {
     this.flashes.push(f);
+    if ((f.kind === 'miss' || f.kind === 'wrong') && this.status === 'running') this.mistakeListeners.forEach((l) => l(f));
+  }
+
+  private mistakeListeners = new Set<(f: Flash) => void>();
+
+  /** Called for every missed or wrong note while running. */
+  onMistake(l: (f: Flash) => void): () => void {
+    this.mistakeListeners.add(l);
+    return () => this.mistakeListeners.delete(l);
   }
 
   inputLag(): number {
@@ -229,7 +307,7 @@ export class Session implements SessionContext {
   }
 
   private onNote(n: PlayedNote) {
-    if (this.status !== 'running') return;
+    if (this.status !== 'running' || this.demo) return;
     this.lastSource = n.source;
     if (n.source === 'mic' && this.isLikelyOvertone(n)) {
       this.keyKinds.set(n.pitch, 'neutral');
@@ -242,7 +320,27 @@ export class Session implements SessionContext {
 
   frame(now: number): void {
     if (this.status !== 'running') return;
+    if (this.demo) {
+      if (now >= this.demo.end + 350) this.endDemo(now);
+      return;
+    }
+    if (this.hearFirstBars) {
+      const beat = this.controller.clampBeat();
+      if (Number.isFinite(beat) && beat < this.region.endBeat - 1e-6) {
+        const phrase = this.phraseIndex(beat);
+        if (phrase > this.demoDone) {
+          this.startDemo(phrase, now);
+          return;
+        }
+      }
+    }
     this.controller.update(now);
+    // Piano Roll with lives: the game ends when they run out.
+    if (this.controller.judgments()?.gameOver) {
+      this.message = 'Game over';
+      this.finish(now, false);
+      return;
+    }
     const clamp = this.controller.clampBeat();
     this.appSched.run(this.clock, now, clamp, this.region.endBeat);
     this.guideSched?.run(this.clock, now, clamp, this.region.endBeat);
@@ -263,9 +361,26 @@ export class Session implements SessionContext {
     this.passes.push({ accuracy: acc, rate: this.rate, durationSec: (now - this.passStart) / 1000, clean });
     this.lastPass = { steps: this.controller.stepResults(), extras: this.controller.extras(), judgments: this.controller.judgments() };
     let msg = `Pass ${this.passes.length}: ${Math.round(acc * 100)}%`;
-    if (this.opts.autoSpeedUp && clean && this.rate < this.tuning.maxRate - 1e-6) {
+    // Speed-up rules: clean passes in a row before going faster; two bad ones in a row slow it down.
+    const need = Math.max(1, this.opts.practice?.cleanPasses ?? 1);
+    const recent = this.passes.slice(-need);
+    const streak = recent.length === need && recent.every((p) => p.clean && Math.abs(p.rate - this.rate) < 1e-6);
+    const lastTwo = this.passes.slice(-2);
+    if (this.opts.autoSpeedUp && clean && streak && this.rate < this.tuning.maxRate - 1e-6) {
       this.setRate(Math.round(Math.min(this.tuning.maxRate, this.rate + this.tuning.speedStep) * 100) / 100);
       msg += ` — tempo up to ${Math.round(this.rate * 100)}%`;
+    } else if (this.opts.autoSpeedUp && clean && !streak) {
+      const done = this.passes.length - this.passes.map((p) => p.clean && Math.abs(p.rate - this.rate) < 1e-6).lastIndexOf(false) - 1;
+      msg += ` — clean ${Math.min(done, need)} of ${need}`;
+    } else if (
+      this.opts.autoSpeedUp &&
+      this.opts.practice?.slowDown &&
+      lastTwo.length === 2 &&
+      lastTwo.every((p) => !p.clean && Math.abs(p.rate - this.rate) < 1e-6) &&
+      this.rate > 0.3 + 1e-6
+    ) {
+      this.setRate(Math.round(Math.max(0.3, this.rate - this.tuning.speedStep) * 100) / 100);
+      msg += ` — slowing to ${Math.round(this.rate * 100)}%`;
     } else if (!clean) {
       msg += ' — again, slowly and cleanly';
     }
@@ -288,15 +403,29 @@ export class Session implements SessionContext {
   }
 
   playhead(now: number): number {
+    const d = this.demo;
+    if (d && this.status === 'running') return Math.min(d.to, d.from + ((now - d.start) / 1000) * this.targetBps);
     return this.status === 'running' ? this.controller.playhead(now) : this.clock.beatAt(now);
   }
 
   targets(now: number): number[] {
-    return this.status === 'running' ? this.controller.targets(now) : [];
+    if (this.status !== 'running') return [];
+    if (this.demo) {
+      // The keys Pianist is playing light up.
+      const beat = this.playhead(now);
+      return this.allNotes.filter((n) => n.start <= beat && n.start + n.dur > beat && (this.opts.otherHand === 'app' || this.hands.includes(n.hand))).map((n) => n.pitch);
+    }
+    return this.controller.targets(now);
+  }
+
+  /** Pitches of the next steps (look-ahead hints). */
+  upcoming(count: number): number[][] {
+    if (this.status !== 'running' || this.demo || !count) return [];
+    return this.controller.upcoming?.(count) ?? [];
   }
 
   waiting(now: number): boolean {
-    return this.status === 'running' && this.controller.waiting(now);
+    return this.status === 'running' && !this.demo && this.controller.waiting(now);
   }
 
   hud(now: number): Hud {
@@ -314,6 +443,10 @@ export class Session implements SessionContext {
       waiting: this.waiting(now),
       timed: this.timed,
       status: this.status,
+      points: j?.points ?? 0,
+      lives: j?.lives ?? null,
+      multiplier: j?.multiplier ?? 1,
+      demo: !!this.demo,
     };
   }
 
@@ -367,7 +500,8 @@ export class Session implements SessionContext {
         completed: completed || !!useLast,
         source: this.lastSource,
         regionMeasures: [this.region.fromMeasure, this.region.toMeasure],
-        weights: this.opts.weights,
+        // Notes only: timing and tempo don't count.
+        weights: this.opts.weights && this.judging === 'notes' ? { ...this.opts.weights, timing: 0, tempo: 0 } : this.opts.weights,
       });
       this.report.mode = this.opts.mode;
     }
@@ -404,5 +538,6 @@ export class Session implements SessionContext {
     this.unsubs = [];
     piano.stopAll('accomp');
     this.listeners.clear();
+    this.mistakeListeners.clear();
   }
 }

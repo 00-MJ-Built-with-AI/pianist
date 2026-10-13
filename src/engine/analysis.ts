@@ -345,6 +345,8 @@ export function analyze(input: AnalysisInput): Report {
           miss: input.judgments.miss,
           wrong: input.judgments.wrong,
           maxCombo: input.judgments.maxCombo,
+          points: input.judgments.points,
+          gameOver: input.judgments.gameOver,
         }
       : undefined,
     passes: input.passes,

@@ -2,6 +2,7 @@ import type { Flash, KeyKind } from '../engine/controllers';
 import { NoteMark } from '../engine/types';
 import { isBlackKey, noteLabel, type NameStyle } from '../music/pitch';
 import { suggestFingering } from '../music/fingering';
+import { pcKeyFor } from '../input/keyboard';
 import type { Hand, Song } from '../music/types';
 
 export interface StageFrame {
@@ -19,6 +20,14 @@ export interface StageFrame {
   hideCues: boolean;
   display: StageDisplay;
   preferFlats: boolean;
+  /** Hands whose notes aren't drawn at all. */
+  hiddenHands?: Hand[];
+  /** Pitches of the next steps (nearest first), shown faded on the keys. */
+  upcoming?: number[][];
+  /** Finger numbers on the keys to play. */
+  fingersOnKeys?: boolean;
+  /** Read-ahead challenge: notes fade out before the line, or only appear near it. */
+  reading?: 'off' | 'fade' | 'late';
 }
 
 /** How the keyboard and falling notes look. */
@@ -33,6 +42,9 @@ export interface StageDisplay {
   noteGlow: boolean;
   theme: 'dark' | 'light' | 'contrast';
   handColors: { R: string; L: string };
+  showKeyboard?: boolean;
+  /** Labels on the keys: note names, the computer keys that play them, or both. */
+  keyLabelSource?: 'note' | 'pc' | 'both';
 }
 
 export const DEFAULT_DISPLAY: StageDisplay = {
@@ -238,7 +250,10 @@ export class Stage {
     return null;
   }
 
+  private kbHidden = false;
+
   private keyboardHeight(): number {
+    if (this.kbHidden) return 0;
     const s = KEYBOARD_SIZES[this.kbSize];
     return Math.max(s.min, Math.min(s.max, this.h * s.k));
   }
@@ -247,6 +262,7 @@ export class Stage {
     const { ctx } = this;
     ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
     this.kbSize = f.display.keyboardSize;
+    this.kbHidden = f.display.showKeyboard === false;
     this.C = { ...THEMES[f.display.theme ?? 'dark'], R: f.display.handColors.R, L: f.display.handColors.L };
     this.C.Rhit = lighten(this.C.R, 0.55);
     this.C.Lhit = lighten(this.C.L, 0.55);
@@ -304,7 +320,7 @@ export class Stage {
     ctx.fillStyle = grad;
     ctx.fillRect(0, fallH - 6, this.w, 6);
 
-    this.drawKeyboard(f, fallH, kbH);
+    if (kbH > 0) this.drawKeyboard(f, fallH, kbH);
     this.drawFlashes(f, fallH);
   }
 
@@ -324,6 +340,7 @@ export class Stage {
       if (n.start > top) break;
       if (n.start + n.dur < f.beat - 0.01) continue;
       if (n.pitch < this.lo || n.pitch > this.hi) continue;
+      if (f.hiddenHands?.includes(n.hand)) continue;
       const yBottom = yOf(n.start);
       const yTop = yOf(n.start + n.dur);
       const x = this.keyX[n.pitch] + 1.5;
@@ -345,18 +362,25 @@ export class Stage {
       else if (mark === NoteMark.Missed) fill = C.missed;
       else if (mark === NoteMark.Early || mark === NoteMark.Late) fill = C.off;
       else fill = base;
-      ctx.globalAlpha = mark === NoteMark.Missed ? 0.55 : 1;
+      let alpha = mark === NoteMark.Missed ? 0.55 : 1;
+      // Read-ahead challenge: how far above the line the note still is (0 = at the line, 1 = top).
+      if (user && f.reading && f.reading !== 'off' && mark === NoteMark.Pending && n.start > f.beat) {
+        const d = (n.start - f.beat) * (ppb / fallH);
+        alpha *= f.reading === 'fade' ? Math.min(1, Math.max(0, (d - 0.12) / 0.25)) : Math.min(1, Math.max(0, (0.45 - d) / 0.12));
+        if (alpha <= 0.01) continue;
+      }
+      ctx.globalAlpha = alpha;
       const glowing = f.display.noteGlow && user && n.start <= f.beat + 0.05 && n.start + n.dur > f.beat;
       if (glowing) {
         // A soft halo (much cheaper for tablet graphics chips than a blur shadow).
         ctx.fillStyle = fill;
-        ctx.globalAlpha = 0.22;
+        ctx.globalAlpha = 0.22 * alpha;
         roundRect(ctx, x - 5, yTop - 4, w + 10, h + 10, 9);
         ctx.fill();
-        ctx.globalAlpha = 0.35;
+        ctx.globalAlpha = 0.35 * alpha;
         roundRect(ctx, x - 2.5, yTop - 1.5, w + 5, h + 5, 7);
         ctx.fill();
-        ctx.globalAlpha = 1;
+        ctx.globalAlpha = alpha;
       }
       roundRect(ctx, x, yTop + 1, w, h, 5);
       ctx.fillStyle = fill;
@@ -371,7 +395,7 @@ export class Stage {
         ctx.lineWidth = 1.5;
         ctx.stroke();
       }
-      ctx.globalAlpha = 1;
+      ctx.globalAlpha = alpha;
       if (f.display.noteLabels && h >= 18 && w >= 14 && user) {
         const style = f.display.nameStyle === 'octave' && w < 24 ? 'letter' : f.display.nameStyle;
         const label = mode === 'finger' && finger ? String(finger) : noteLabel(n.pitch, style, f.preferFlats);
@@ -379,6 +403,7 @@ export class Stage {
         ctx.fillStyle = 'rgba(8,10,14,0.75)';
         ctx.fillText(label, x + w / 2, yTop + 1 + h - 3);
       }
+      ctx.globalAlpha = 1;
     }
     ctx.restore();
   }
@@ -394,6 +419,25 @@ export class Stage {
       else hi = mid;
     }
     return lo;
+  }
+
+  /** Suggested finger for a key to play now. */
+  private fingerOfTarget(f: StageFrame, pitch: number): number {
+    const song = this.song;
+    if (!song) return 0;
+    let best = 0;
+    let bestD = Infinity;
+    for (let i = this.firstNoteFrom(f.beat - 4); i < song.notes.length; i++) {
+      const n = song.notes[i];
+      if (n.start > f.beat + 4) break;
+      if (n.pitch !== pitch) continue;
+      const d = Math.abs(n.start - f.beat);
+      if (d < bestD) {
+        bestD = d;
+        best = this.fingers.get(n.id) ?? 0;
+      }
+    }
+    return best;
   }
 
   private handOfTarget(f: StageFrame, pitch: number): Hand {
@@ -422,6 +466,21 @@ export class Stage {
     ctx.textAlign = 'center';
     ctx.textBaseline = 'bottom';
 
+    // Next steps, faded: the nearest is clearest.
+    const ahead = new Map<number, number>();
+    if (f.display.showTargets && f.upcoming) {
+      f.upcoming.forEach((ps, i) => ps.forEach((p) => !targets.has(p) && !ahead.has(p) && ahead.set(p, [0.5, 0.32, 0.18][i] ?? 0.15)));
+    }
+    const source = f.display.keyLabelSource ?? 'note';
+    const fingerMark = (p: number, cx: number, y: number) => {
+      if (!f.fingersOnKeys) return;
+      const finger = this.fingerOfTarget(f, p);
+      if (!finger) return;
+      ctx.font = '700 11px system-ui, sans-serif';
+      ctx.fillStyle = '#0d0f14';
+      ctx.fillText(String(finger), cx, y);
+    };
+
     const keyFill = (p: number, base: string): string => {
       const kind = f.held.get(p);
       if (kind !== undefined) {
@@ -446,15 +505,27 @@ export class Stage {
         ctx.globalAlpha = f.waiting ? 0.55 + 0.45 * pulse : 0.9;
         ctx.fillRect(x + 3, y0 + kbH - 26, w - 6, 16);
         ctx.globalAlpha = 1;
+        fingerMark(p, x + w / 2, y0 + kbH - 12);
+      } else if (ahead.has(p) && !f.held.has(p)) {
+        ctx.fillStyle = this.handOfTarget(f, p) === 'R' ? this.C.R : this.C.L;
+        ctx.globalAlpha = ahead.get(p)!;
+        ctx.fillRect(x + 5, y0 + kbH - 22, w - 10, 10);
+        ctx.globalAlpha = 1;
       }
       const labels = f.display.keyLabels;
-      const showName = labels === 'white' || labels === 'all' || (labels === 'c' && p % 12 === 0);
+      const showName = source !== 'pc' && (labels === 'white' || labels === 'all' || (labels === 'c' && p % 12 === 0));
+      const size = Math.min(11, Math.max(7, w * 0.5));
       if (showName && w > 10) {
         const label = noteLabel(p, f.display.nameStyle, f.preferFlats);
-        const size = Math.min(11, Math.max(7, w * 0.5));
         ctx.font = `${f.held.has(p) ? '700 ' : ''}${size}px system-ui, sans-serif`;
         ctx.fillStyle = f.held.has(p) ? '#0d0f14' : this.C.labelInk;
         ctx.fillText(label, x + w / 2, y0 + kbH - 30, w - 2);
+      }
+      const pc = source !== 'note' ? pcKeyFor(p) : null;
+      if (pc && w > 10) {
+        ctx.font = `700 ${size + 1}px system-ui, sans-serif`;
+        ctx.fillStyle = f.held.has(p) ? '#0d0f14' : '#4c6fff';
+        ctx.fillText(pc, x + w / 2, y0 + kbH - (showName ? 44 : 30), w - 2);
       }
     }
     // Black keys
@@ -477,8 +548,20 @@ export class Stage {
         ctx.globalAlpha = f.waiting ? 0.55 + 0.45 * pulse : 0.95;
         ctx.fillRect(x + 2, y0 + bh - 16, w - 4, 12);
         ctx.globalAlpha = 1;
+        fingerMark(p, x + w / 2, y0 + bh - 5);
+      } else if (ahead.has(p) && !f.held.has(p)) {
+        ctx.fillStyle = this.handOfTarget(f, p) === 'R' ? this.C.R : this.C.L;
+        ctx.globalAlpha = ahead.get(p)!;
+        ctx.fillRect(x + 3, y0 + bh - 13, w - 6, 8);
+        ctx.globalAlpha = 1;
       }
-      if (f.display.keyLabels === 'all') {
+      const pc = source !== 'note' ? pcKeyFor(p) : null;
+      if (pc) {
+        ctx.font = `700 ${Math.min(10, Math.max(7, w * 0.62))}px system-ui, sans-serif`;
+        ctx.fillStyle = f.held.has(p) ? '#0d0f14' : '#8fa6ff';
+        ctx.fillText(pc, x + w / 2, y0 + bh - 20 - (source === 'both' && f.display.keyLabels === 'all' ? 24 : 0), w);
+      }
+      if (f.display.keyLabels === 'all' && source !== 'pc') {
         // Black keys are narrow: the accidental goes above the letter.
         const label = noteLabel(p, f.display.nameStyle === 'octave' ? 'letter' : f.display.nameStyle, f.preferFlats);
         const size = Math.min(10, Math.max(7, w * 0.62));

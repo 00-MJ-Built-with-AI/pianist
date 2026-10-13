@@ -31,6 +31,27 @@ metronome with count-in, A–B bar loops (click bars in the score) with automati
 **Wait for me / Keep going** (wait for the right notes, or keep playing at tempo and mark misses), and
 **transpose** by half steps (C→D is two steps; the key signature follows).
 
+### Per-mode options (⚙ on the toolbar, or Settings → Practice modes)
+
+* **Hands, every mode**: *You play* Left / Both / Right; *Other hand* Pianist plays / Silent / Hidden (hidden notes
+  aren't drawn), with its volume on the toolbar. **Listen** plays only the hands chosen.
+* **Show** row: one-tap switches for the on-screen piano, falling notes, key lights, note names on the keys, on the
+  falling notes and on the sheet music, and computer-key letters on the keys (note names / computer keys / both).
+* **Learn**: *Hear it first* (Pianist plays each 1/2/4-bar phrase, then waits for you); *Hold notes for their full
+  length*; *A wrong note* does nothing / flashes / counts / sends you back to the phrase start; *Show the next
+  notes* (1–3 steps faded on the keys) and finger numbers on the keys.
+* **Practice**: clean passes needed before speeding up (1–5), slowing down after two bad passes, *Rotate hands*
+  (right → left → both each loop), a *fading metronome* (drops out after 1/2/4 bars, beat 1 only, or every other
+  bar), and *Stop and fix* (a mistake in a keep-going run loops that bar until it's clean, then carries on).
+* **Audition**: what you see while performing (everything / sheet music only / nothing, from memory), a 3-2-1
+  countdown, restarts allowed (one take … any), and *Compare with best take* (bar by bar, both replayable).
+* **Piano Roll**: game rules — lives, perfect-only, combo multiplier, points and a high-score table — and a
+  read-ahead challenge (notes fade out before the line, or appear late).
+* **Judge** notes & rhythm, rhythm only (any key counts) or notes only (any timing counts).
+* **Each mode remembers its setup** (tempo, hands, metronome, loop, speed-up) per piece.
+* **Mock exam** (Exercises): scales, up to three pieces and sight-reading, each performed as an Audition, combined
+  into one mark (pieces 60 %, scales 20 %, sight-reading 20 %) with Pass / Merit / Distinction and a history.
+
 ## More
 
 * **Today's practice**: a daily plan on the library page built from your history: a rotating scale warm-up, the
