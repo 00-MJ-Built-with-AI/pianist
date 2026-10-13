@@ -8,8 +8,8 @@ At a glance:
 | | |
 | --- | --- |
 | ✅ Built and live | 100+ features (below) |
-| ⏳ Agreed and still to build | 25 features, in the order agreed |
-| 🙋 Needs you | 7 things only you can do, and 6 decisions to make before those features are built |
+| ⏳ Agreed and still to build | 41 features, in the order agreed |
+| 🙋 Needs you | 8 things only you can do, and 7 decisions to make before those features are built |
 
 The top right of the app shows when the version you're running was published. If a newer one is online, it turns into an **Update available** button.
 
@@ -160,6 +160,36 @@ The top right of the app shows when the version you're running was published. If
 
 25. **Sync between devices** through your own Google Drive 🙋 (needs a Google sign-in key; see below).
 
+**Step 5: chosen 13 Oct 2026**
+
+*Learn smarter*
+
+26. **Simplify any piece**: easier versions with one click (melody only, a simpler left hand, thinner chords, simpler rhythms).
+27. **Add a left hand**: Pianist writes a left-hand part for melody-only songs (block chords, broken chords, Alberti bass).
+28. **What to learn next**: suggests your next piece and exercise from your level and what you've mastered.
+29. **Recital planner**: a performance date for a piece, daily goals to get it ready, and a countdown.
+
+*Practice tools*
+
+30. **Play along with YouTube**: paste a link, slow it down, loop a section and practise next to it (YouTube's official player).
+31. **Pencil on the sheet music**: draw and write on the sheet, saved with each piece and printed with it.
+32. **Voice commands**: say "start", "slower", "again" or "next bar" (Chrome).
+33. **Metronome page**: tap tempo, gradual speed-up, rhythm patterns and sounds, for practising from paper books.
+
+*App*
+
+34. **What's new panel**: after each update, a short list of what changed, shown once.
+35. **App shortcuts**: long-press the installed app's icon for "Continue last piece", "Today's plan" or "Piano check-up".
+36. **Follow system theme**: light or dark switches with your computer's setting.
+37. **Bigger text and accessibility**: a larger-text option, full keyboard navigation and screen-reader labels.
+
+*Family and sharing*
+
+38. **Family dashboard**: every player's streak, minutes and recent stars on this device, on one screen.
+39. **Certificates**: printable certificates for a passed mock exam, 3 stars on a piece, or a long streak.
+40. **Share a performance**: save a performance and its report as a file; the person you send it to opens it in Pianist.
+41. **Play with a friend online** 🙋: live duets or challenges between devices (needs a server; see below).
+
 ---
 
 ## 🙋 What needs you
@@ -174,6 +204,7 @@ The top right of the app shows when the version you're running was published. If
 5. **Create a Google sign-in key** when we reach sync (step 4). This means a free Google Cloud project with the Drive API turned on, an OAuth consent screen, and a "Web application" client ID with `https://pianist-six.vercel.app` as an allowed origin. I'll walk you through it. You only send me the client ID, never a password or secret.
 6. **Copyrighted songs** (for example "Leaves from the Vine" or "Let It Go"): get a legal MIDI or MusicXML file (buy it or download a licensed one) and drag it into the library. You can also transcribe a recording you own. They can't be bundled in the public app.
 7. **Approve actions when Claude Code asks**, such as publishing the site.
+8. **Set up a small server account** for *Play with a friend online* when we get there. Real-time play between two devices needs a relay service. Options include Supabase Realtime, Ably and PartyKit; each has a free tier with limits and may cost money as it grows. You'd create the account, and I'd write the code.
 
 ### Decisions before I build these
 
@@ -185,6 +216,7 @@ The top right of the app shows when the version you're running was published. If
 | Weekly progress report | Shown in the app only, or also by email? Email needs an email service and an account. |
 | Achievements and challenges | Playful (kid-friendly badges) or grown-up (milestones and stats)? Weekly challenges picked by Pianist, or chosen by you? |
 | Audio recording | Keep recordings in the browser (there's a storage limit), or save each one as a file? |
+| Play with a friend online | Which service (free tier first)? Only people you invite with a code, or open matchmaking? Duets only, or challenges too? |
 
 All other features can be built without further input.
 
@@ -201,4 +233,4 @@ All other features can be built without further input.
 | 12 Oct 2026 | Customisation: Settings page, players, backup, hands-free control, themes, sounds, library tools, feedback |
 | 13 Oct 2026 | Piano check-up, smarter microphone hearing (noise gate, chords, pedal ring), lighter and smoother on tablets |
 | 13 Oct 2026 | Options for each mode, hand controls, the Show row, game rules, comparing takes, mock exam |
-| 13 Oct 2026 | Always loads the latest version, with the publish date and an Update button at the top right; this status page |
+| 13 Oct 2026 | Always loads the latest version, with the publish date and an Update button at the top right; this status page; 16 more features planned (step 5) |
