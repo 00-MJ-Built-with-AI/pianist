@@ -2,6 +2,10 @@ import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { App } from './App';
 import './styles.css';
+import { updateOnOpen } from './updates';
+
+// Opening the app always lands on the newest version.
+void updateOnOpen();
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>

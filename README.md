@@ -3,6 +3,8 @@
 A piano practice web app in the spirit of Harmono: it listens to your real piano (USB/Bluetooth MIDI or the
 microphone), shows real sheet music with falling notes, and coaches you bar by bar.
 
+**[STATUS.md](STATUS.md)**: everything Pianist does today, what's still planned, and what needs your input.
+
 ## Run it
 
 ```bash
@@ -75,6 +77,11 @@ metronome with count-in, A–B bar loops (click bars in the score) with automati
 * **Install & offline**: installable app (manifest + service worker that caches the whole app, the note-detector model
   and the piano sound after first use); touch-friendly, multi-touch on-screen keyboard for tablets.
 * **Fix my mistakes**: from any report, loop each stretch of weak bars slowly and speed back up to tempo.
+* **Always the latest version**: each build writes `/version.json` (id + time) and stamps itself with the same.
+  On opening, the app compares the two and switches to a newer version on its own; while open it checks every
+  5 minutes and on focus. The top right shows "Updated <date, time>", or an *Update available* button that hands
+  over to the new service worker, drops the old offline copy and reloads. `vercel.json` keeps the page, `sw.js`
+  and `version.json` from being cached (hashed assets are cached for a year).
 * **Light on tablets**: the piano sound is kept in mono and trimmed (~45 MB instead of ~160 MB once decoded) and
   the middle octaves load first; the keyboard and falling notes are only redrawn when something changes; the
   glow is drawn without blur shadows; the score counter only re-renders when its numbers change.

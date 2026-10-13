@@ -30,6 +30,7 @@ import { useSettings } from './store/settings';
 import { InputBar } from './ui/InputBar';
 import { InstallButton } from './ui/InstallButton';
 import { ProfileMenu } from './ui/ProfileMenu';
+import { UpdateBadge } from './ui/UpdateBadge';
 import { Library, type Queue } from './ui/Library';
 import type { PlayerPreset } from './ui/Player';
 import type { EarKind } from './music/ear';
@@ -259,6 +260,7 @@ export function App() {
         <ProfileMenu />
         <InstallButton />
         <InputBar />
+        <UpdateBadge />
       </header>
       {reminderText && (
         <div className="reminder-banner">

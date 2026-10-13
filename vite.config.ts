@@ -4,6 +4,21 @@ import { join } from 'node:path';
 import type { Plugin } from 'vite';
 import { defineConfig } from 'vitest/config';
 
+/** This build: an id and the time it was made (shown in the app, and in /version.json to spot newer builds). */
+const BUILT_AT = new Date().toISOString();
+const BUILD_ID = Date.now().toString(36);
+
+/** Writes /version.json so a running copy of the app can tell when a newer version is online. */
+function versionFile(): Plugin {
+  return {
+    name: 'pianist-version',
+    apply: 'build',
+    generateBundle() {
+      this.emitFile({ type: 'asset', fileName: 'version.json', source: JSON.stringify({ id: BUILD_ID, builtAt: BUILT_AT }) });
+    },
+  };
+}
+
 /** Files in public/ (copied as-is), as site paths. */
 function publicFiles(dir = 'public', base = ''): string[] {
   return readdirSync(dir).flatMap((name) => {
@@ -23,10 +38,12 @@ function serviceWorker(): Plugin {
     generateBundle(_, bundle) {
       const files = [
         '/',
-        ...Object.keys(bundle).map((f) => `/${f}`),
+        ...Object.keys(bundle)
+          .filter((f) => f !== 'version.json')
+          .map((f) => `/${f}`),
         ...publicFiles().filter((f) => !f.endsWith('LICENSE') && !f.endsWith('NOTICE')),
       ];
-      const version = Date.now().toString(36);
+      const version = BUILD_ID;
       this.emitFile({
         type: 'asset',
         fileName: 'sw.js',
@@ -35,6 +52,11 @@ const VERSION = '${version}';
 const APP = 'pianist-app-' + VERSION;
 const SAMPLES = 'pianist-samples-v1';
 const PRECACHE = ${JSON.stringify([...new Set(files)])};
+
+// The page asks a waiting new version to take over straight away.
+self.addEventListener('message', (event) => {
+  if (event.data === 'skipWaiting') self.skipWaiting();
+});
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
@@ -55,6 +77,8 @@ self.addEventListener('fetch', (event) => {
   const req = event.request;
   if (req.method !== 'GET') return;
   const url = new URL(req.url);
+  // Always ask the server which version is newest.
+  if (url.pathname === '/version.json') return;
   // Piano samples: keep them once downloaded.
   if (url.hostname === 'tonejs.github.io') {
     event.respondWith(
@@ -96,7 +120,11 @@ self.addEventListener('fetch', (event) => {
 }
 
 export default defineConfig({
-  plugins: [react(), serviceWorker()],
+  plugins: [react(), serviceWorker(), versionFile()],
+  define: {
+    __BUILD_ID__: JSON.stringify(BUILD_ID),
+    __BUILT_AT__: JSON.stringify(BUILT_AT),
+  },
   server: { host: true, port: 5180, strictPort: true },
   preview: { host: true, port: 4180, strictPort: true },
   build: { chunkSizeWarningLimit: 4000 },
