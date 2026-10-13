@@ -9,7 +9,7 @@ At a glance:
 | --- | --- |
 | ✅ Built and live | 100+ features (below) |
 | ⏳ Agreed and still to build | 41 features, in the order agreed |
-| 🙋 Needs you | 8 things only you can do, and 7 decisions to make before those features are built |
+| 🙋 Needs you | 6 things only you can do (2 more already done), and 7 decisions to make before those features are built |
 
 The top right of the app shows when the version you're running was published. If a newer one is online, it turns into an **Update available** button.
 
@@ -198,10 +198,10 @@ The top right of the app shows when the version you're running was published. If
 
 1. **Test on your real piano.** Open Settings → Timing & microphone → **Piano check-up**. Do it with MIDI (USB cable) and with the microphone, press **Save check-up file**, and send me the file (put it in the `piano-app` folder or attach it in the chat). So far everything has been tested with simulated pianos, so this is how I tune it to your piano and room.
 2. **Try it on your own devices**: your computer in Chrome or Edge, and any tablet. Android Chrome supports MIDI; iPad Safari does not, so an iPad can only use the microphone.
-3. **Turn on automatic deploys** (optional). The repository moved to the `00-MJ-Built-with-AI` organisation. In GitHub → Settings → Applications → **Vercel** → Configure, give it access to `pianist`. Then in the Vercel project → Settings → Git, connect the repository. After that, every push publishes the site by itself. Until then I publish it by hand.
+3. ✅ **Automatic deploys** (done 13 Oct 2026). The repository is connected to Vercel, so every push to `main` publishes the site by itself.
 4. **Update the local git address** (optional; I'm not allowed to change it). Pushing still works through GitHub's redirect.
    `git remote set-url origin https://github.com/00-MJ-Built-with-AI/pianist.git`
-5. **Create a Google sign-in key** when we reach sync (step 4). This means a free Google Cloud project with the Drive API turned on, an OAuth consent screen, and a "Web application" client ID with `https://pianist-six.vercel.app` as an allowed origin. I'll walk you through it. You only send me the client ID, never a password or secret.
+5. ✅ **Google sign-in key** (received 13 Oct 2026; stored in `src/config.ts`). It's ready for sync in step 4. Sync only uses Pianist's own hidden folder in your Drive (`drive.appdata`). While the Google app is in "Testing", only the test users you added can sign in.
 6. **Copyrighted songs** (for example "Leaves from the Vine" or "Let It Go"): get a legal MIDI or MusicXML file (buy it or download a licensed one) and drag it into the library. You can also transcribe a recording you own. They can't be bundled in the public app.
 7. **Approve actions when Claude Code asks**, such as publishing the site.
 8. **Set up a small server account** for *Play with a friend online* when we get there. Real-time play between two devices needs a relay service. Options include Supabase Realtime, Ably and PartyKit; each has a free tier with limits and may cost money as it grows. You'd create the account, and I'd write the code.
@@ -234,3 +234,4 @@ All other features can be built without further input.
 | 13 Oct 2026 | Piano check-up, smarter microphone hearing (noise gate, chords, pedal ring), lighter and smoother on tablets |
 | 13 Oct 2026 | Options for each mode, hand controls, the Show row, game rules, comparing takes, mock exam |
 | 13 Oct 2026 | Always loads the latest version, with the publish date and an Update button at the top right; this status page; 16 more features planned (step 5) |
+| 13 Oct 2026 | Automatic publishing from GitHub turned on; Google sign-in key for sync added |
